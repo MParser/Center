@@ -1,0 +1,197 @@
+components:
+  schemas:
+    NDS:
+      type: object
+      required:
+        - id
+        - Name
+        - Address
+        - Account
+        - Password
+      properties:
+        id:
+          type: integer
+          description: NDS ID
+        Name:
+          type: string
+          description: NDS名称
+        Address:
+          type: string
+          description: NDS地址
+        Port:
+          type: integer
+          description: 端口号
+          default: 2121
+        Protocol:
+          type: string
+          description: 协议
+          default: SFTP
+        Account:
+          type: string
+          description: 账号
+        Password:
+          type: string
+          description: 密码
+        MRO_Path:
+          type: string
+          description: MRO路径
+          default: /MR/MRO/
+        MRO_Filter:
+          type: string
+          description: MRO文件过滤规则
+          default: ^/MR/MRO/[^/]+/[^/]+_MRO_[^/]+.zip$
+        MDT_Path:
+          type: string
+          description: MDT路径
+          default: /MDT/
+        MDT_Filter:
+          type: string
+          description: MDT文件过滤规则
+          default: ^/MDT/[^/]+/CSV/LOG-MDT/.*_LOG-MDT_.*.zip$
+        Switch:
+          type: integer
+          description: 开关(0-关闭,1-开启)
+          default: 1
+
+paths:
+  /api/nds/list:
+    get:
+      summary: 获取NDS列表
+      tags: [NDS管理]
+      responses:
+        '200':
+          description: 成功获取NDS列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NDS'
+                  message:
+                    type: string
+                    example: 获取NDS列表成功
+
+  /api/nds/{id}:
+    get:
+      summary: 获取单个NDS
+      tags: [NDS管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+          description: NDS ID
+      responses:
+        '200':
+          description: 成功获取NDS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/NDS'
+                  message:
+                    type: string
+                    example: 获取NDS成功
+        '404':
+          description: NDS不存在
+
+    put:
+      summary: 更新NDS信息
+      tags: [NDS管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+          description: NDS ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NDS'
+      responses:
+        '200':
+          description: 成功更新NDS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/NDS'
+                  message:
+                    type: string
+                    example: 更新NDS成功
+        '404':
+          description: NDS不存在
+
+    delete:
+      summary: 删除NDS
+      tags: [NDS管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: integer
+          required: true
+          description: NDS ID
+      responses:
+        '200':
+          description: 成功删除NDS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: 删除NDS成功
+        '404':
+          description: NDS不存在
+
+  /api/nds:
+    post:
+      summary: 创建NDS
+      tags: [NDS管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NDS'
+      responses:
+        '200':
+          description: 成功创建NDS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/NDS'
+                  message:
+                    type: string
+                    example: 创建NDS成功

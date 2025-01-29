@@ -1,0 +1,292 @@
+
+components:
+  schemas:
+    Gateway:
+      type: object
+      required:
+        - id
+        - host
+        - port
+      properties:
+        id:
+          type: string
+          description: 网关ID
+        host:
+          type: string
+          description: 主机地址（IP地址）
+        port:
+          type: integer
+          description: 端口号
+        status:
+          type: integer
+          description: 状态(0-离线,1-在线)
+          default: 0
+        switch:
+          type: integer
+          description: 开关(0-关闭,1-开启)
+          default: 0
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新时间
+        ndsLinks:
+          type: array
+          description: 关联的NDS列表
+          items:
+            type: object
+            properties:
+              nds:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    description: NDS ID
+                  Name:
+                    type: string
+                    description: NDS名称
+                  Address:
+                    type: string
+                    description: NDS地址
+                  Port:
+                    type: integer
+                    description: 端口号
+                  Protocol:
+                    type: string
+                    description: 协议
+                  Account:
+                    type: string
+                    description: 账号
+                  Password:
+                    type: string
+                    description: 密码
+                  MRO_Path:
+                    type: string
+                    description: MRO路径
+                  MRO_Filter:
+                    type: string
+                    description: MRO文件过滤规则
+                  MDT_Path:
+                    type: string
+                    description: MDT路径
+                  MDT_Filter:
+                    type: string
+                    description: MDT文件过滤规则
+                  Switch:
+                    type: integer
+                    description: 开关(0-关闭,1-开启)
+
+paths:
+  /api/gateway/list:
+    get:
+      summary: 获取网关列表
+      tags: [网关管理]
+      responses:
+        '200':
+          description: 成功获取网关列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Gateway'
+                  message:
+                    type: string
+                    example: 获取网关列表成功
+
+  /api/gateway/{id}:
+    get:
+      summary: 获取单个网关
+      tags: [网关管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: 网关ID
+      responses:
+        '200':
+          description: 成功获取网关
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Gateway'
+                  message:
+                    type: string
+                    example: 获取网关成功
+        '404':
+          description: 网关不存在
+    
+    put:
+      summary: 更新网关信息
+      tags: [网关管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: 网关ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host:
+                  type: string
+                  description: 主机地址
+                port:
+                  type: integer
+                  description: 端口号
+                status:
+                  type: integer
+                  description: 状态(0-离线,1-在线)
+                switch:
+                  type: integer
+                  description: 开关(0-关闭,1-开启)
+      responses:
+        '200':
+          description: 成功更新网关
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Gateway'
+                  message:
+                    type: string
+                    example: 更新网关成功
+    
+    delete:
+      summary: 删除网关
+      tags: [网关管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: 网关ID
+      responses:
+        '200':
+          description: 成功删除网关
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    type: null
+                  message:
+                    type: string
+                    example: 删除网关成功
+
+  /api/gateway/register:
+    post:
+      summary: 注册网关
+      description: 如果网关已存在则更新状态为在线，如果不存在则创建新网关
+      tags: [网关管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+                - port
+              properties:
+                id:
+                  type: string
+                  description: 网关ID
+                port:
+                  type: integer
+                  description: 端口号
+      responses:
+        '200':
+          description: 成功注册网关
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Gateway'
+                  message:
+                    type: string
+                    example: 注册网关成功
+
+  /api/gateway/{id}/nds:
+    post:
+      summary: 设置网关关联的NDS
+      tags: [网关管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: 网关ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - ndsIds
+              properties:
+                ndsIds:
+                  type: array
+                  description: NDS ID列表
+                  items:
+                    type: integer
+                  example: [1, 2, 3]
+      responses:
+        '200':
+          description: 成功设置网关关联的NDS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Gateway'
+                  message:
+                    type: string
+                    example: 设置网关NDS成功
+        '404':
+          description: 网关不存在
+        '400':
+          description: 存在无效的NDS ID或重复的NDS关联

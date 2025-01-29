@@ -1,0 +1,268 @@
+components:
+  schemas:
+    Gateway:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Gateway ID
+        name:
+          type: string
+          description: Gateway名称
+        status:
+          type: integer
+          description: 状态(0-离线,1-在线)
+        switch:
+          type: integer
+          description: 开关(0-关闭,1-开启)
+
+    Parser:
+      type: object
+      required:
+        - id
+        - host
+        - port
+      properties:
+        id:
+          type: string
+          description: Parser ID
+        gatewayId:
+          type: string
+          description: 关联的网关ID（可选）
+        name:
+          type: string
+          description: Parser名称
+        host:
+          type: string
+          description: 主机地址（IP地址）
+        port:
+          type: integer
+          description: 端口号
+          default: 10002
+        status:
+          type: integer
+          description: 状态(0-离线,1-在线)
+          default: 0
+        switch:
+          type: integer
+          description: 开关(0-关闭,1-开启)
+          default: 0
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新时间
+        gateway:
+          $ref: '#/components/schemas/Gateway'
+
+paths:
+  /api/parser/list:
+    get:
+      summary: 获取Parser列表
+      tags: [Parser管理]
+      responses:
+        '200':
+          description: 成功获取Parser列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Parser'
+                  message:
+                    type: string
+                    example: 获取Parser列表成功
+
+  /api/parser/{id}:
+    get:
+      summary: 获取单个Parser
+      tags: [Parser管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: Parser ID
+      responses:
+        '200':
+          description: 成功获取Parser
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Parser'
+                  message:
+                    type: string
+                    example: 获取Parser成功
+        '404':
+          description: Parser不存在
+    
+    put:
+      summary: 更新Parser信息
+      tags: [Parser管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: Parser ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Parser名称
+                port:
+                  type: integer
+                  description: 端口号
+                status:
+                  type: integer
+                  description: 状态(0-离线,1-在线)
+                switch:
+                  type: integer
+                  description: 开关(0-关闭,1-开启)
+      responses:
+        '200':
+          description: 成功更新Parser
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Parser'
+                  message:
+                    type: string
+                    example: 更新Parser成功
+    
+    delete:
+      summary: 删除Parser
+      tags: [Parser管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: Parser ID
+      responses:
+        '200':
+          description: 成功删除Parser
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    type: null
+                  message:
+                    type: string
+                    example: 删除Parser成功
+
+  /api/parser/register:
+    post:
+      summary: 注册Parser
+      description: 如果Parser已存在则更新状态为在线，如果不存在则创建新Parser
+      tags: [Parser管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+                - port
+              properties:
+                id:
+                  type: string
+                  description: Parser ID
+                port:
+                  type: integer
+                  description: 端口号
+      responses:
+        '200':
+          description: 成功注册Parser
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Parser'
+                  message:
+                    type: string
+                    example: 注册Parser成功
+
+  /api/parser/{id}/gateway:
+    post:
+      summary: 设置Parser关联的Gateway
+      tags: [Parser管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: Parser ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - gatewayId
+              properties:
+                gatewayId:
+                  type: string
+                  description: Gateway ID
+      responses:
+        '200':
+          description: 成功设置Parser关联的Gateway
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Parser'
+                  message:
+                    type: string
+                    example: 设置Parser Gateway成功
+        '404':
+          description: Parser不存在
+        '400':
+          description: 指定的Gateway不存在

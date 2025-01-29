@@ -1,0 +1,50 @@
+# 依赖目录
+node_modules/
+yarn-debug.log*
+yarn-error.log*
+
+# 环境配置文件
+.env
+.env.local
+.env.*.local
+
+# 日志文件
+logs
+*.log
+npm-debug.log*
+
+# 编辑器目录和文件
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 测试覆盖率报告
+coverage/
+
+# 构建输出目录
+dist/
+build/
+
+# 临时文件
+*.tmp
+*.temp
+.cache/
+
+# yarn相关
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.*
+
+*/migrations/

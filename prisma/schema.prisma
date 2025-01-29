@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// 网关列表模型
+model gatewayList {
+  id        String   @id @db.VarChar(128)
+  name      String?  @db.VarChar(255)
+  host      String   @db.VarChar(255)
+  port      Int
+  status    Int      @default(0)
+  switch    Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  scanners  scannerList[]
+  parsers   parserList[]
+  ndsLinks  GatewayNDSLink[]
+
+  @@map("gateway_list")
+}
+
+// NDS列表模型
+model ndsList {
+  id         Int    @id @default(autoincrement())
+  Name       String @db.VarChar(150)
+  Address    String @db.VarChar(100)
+  Port       Int    @default(2121)
+  Protocol   String @default("SFTP") @db.VarChar(20)
+  Account    String @db.VarChar(100)
+  Password   String @db.VarChar(100)
+  MRO_Path   String @default("/MR/MRO/") @db.VarChar(250)
+  MRO_Filter String @default("^/MR/MRO/[^/]+/[^/]+_MRO_[^/]+.zip$") @db.VarChar(250)
+  MDT_Path   String @default("/MDT/") @db.VarChar(250)
+  MDT_Filter String @default("^/MDT/[^/]+/CSV/LOG-MDT/.*_LOG-MDT_.*.zip$") @db.VarChar(250)
+  Switch     Int    @default(1)
+  gatewayLinks GatewayNDSLink[]
+  scannerLinks ScannerNDSLink[]
+
+  @@map("nds-list")
+}
+
+// Gateway和NDS的关联表
+model GatewayNDSLink {
+  id        Int      @id @default(autoincrement())
+  gatewayId String   @db.VarChar(128) // 网关ID
+  ndsId     Int      @db.Int // NDS ID
+  createdAt DateTime @default(now())
+  gateway   gatewayList @relation(fields: [gatewayId], references: [id])
+  nds       ndsList    @relation(fields: [ndsId], references: [id])
+
+  @@unique([gatewayId, ndsId])
+  @@map("gateway_nds_link")
+}
+
+// Scanner列表模型
+model scannerList {
+  id        String   @id @db.VarChar(128)
+  gatewayId String?  @db.VarChar(128)
+  name      String?  @db.VarChar(255)
+  host      String   @db.VarChar(255)
+  port      Int      @default(10002)
+  status    Int      @default(0)
+  switch    Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  gateway   gatewayList? @relation(fields: [gatewayId], references: [id])
+  ndsLinks  ScannerNDSLink[]
+
+  @@map("scanner-list")
+}
+
+// Scanner和NDS的关联表
+model ScannerNDSLink {
+  id        Int      @id @default(autoincrement())
+  scannerId String   @db.VarChar(128) // Scanner ID
+  ndsId     Int      @db.Int // NDS ID
+  createdAt DateTime @default(now())
+  scanner   scannerList @relation(fields: [scannerId], references: [id])
+  nds       ndsList    @relation(fields: [ndsId], references: [id])
+
+  @@unique([scannerId, ndsId])
+  @@map("scanner_nds_link")
+}
+
+// Parser列表模型
+model parserList {
+  id        String   @id @db.VarChar(128)
+  gatewayId String?  @db.VarChar(128)
+  name      String?  @db.VarChar(255)
+  host      String   @db.VarChar(255)
+  port      Int      @default(10002)
+  status    Int      @default(0)
+  switch    Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  gateway   gatewayList? @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
+  
+  @@map("parser-list")
+}

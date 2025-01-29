@@ -1,0 +1,344 @@
+components:
+  schemas:
+    Gateway:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Gateway ID
+        name:
+          type: string
+          description: Gateway名称
+        status:
+          type: integer
+          description: 状态(0-离线,1-在线)
+        switch:
+          type: integer
+          description: 开关(0-关闭,1-开启)
+
+    NDS:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: NDS ID
+        name:
+          type: string
+          description: NDS名称
+        status:
+          type: integer
+          description: 状态(0-离线,1-在线)
+        switch:
+          type: integer
+          description: 开关(0-关闭,1-开启)
+
+    Scanner:
+      type: object
+      required:
+        - id
+        - host
+        - port
+      properties:
+        id:
+          type: string
+          description: Scanner ID
+        gatewayId:
+          type: string
+          description: 关联的网关ID（可选）
+        name:
+          type: string
+          description: Scanner名称
+        host:
+          type: string
+          description: 主机地址（IP地址）
+        port:
+          type: integer
+          description: 端口号
+          default: 10002
+        status:
+          type: integer
+          description: 状态(0-离线,1-在线)
+          default: 0
+        switch:
+          type: integer
+          description: 开关(0-关闭,1-开启)
+          default: 0
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新时间
+        gateway:
+          $ref: '#/components/schemas/Gateway'
+        ndsLinks:
+          type: array
+          description: 关联的NDS列表
+          items:
+            type: object
+            properties:
+              nds:
+                $ref: '#/components/schemas/NDS'
+
+paths:
+  /api/scanner/list:
+    get:
+      summary: 获取Scanner列表
+      tags: [Scanner管理]
+      responses:
+        '200':
+          description: 成功获取Scanner列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Scanner'
+                  message:
+                    type: string
+                    example: 获取Scanner列表成功
+
+  /api/scanner/{id}:
+    get:
+      summary: 获取单个Scanner
+      tags: [Scanner管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: Scanner ID
+      responses:
+        '200':
+          description: 成功获取Scanner
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Scanner'
+                  message:
+                    type: string
+                    example: 获取Scanner成功
+        '404':
+          description: Scanner不存在
+    
+    put:
+      summary: 更新Scanner信息
+      tags: [Scanner管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: Scanner ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Scanner名称
+                port:
+                  type: integer
+                  description: 端口号
+                status:
+                  type: integer
+                  description: 状态(0-离线,1-在线)
+                switch:
+                  type: integer
+                  description: 开关(0-关闭,1-开启)
+      responses:
+        '200':
+          description: 成功更新Scanner
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Scanner'
+                  message:
+                    type: string
+                    example: 更新Scanner成功
+    
+    delete:
+      summary: 删除Scanner
+      tags: [Scanner管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: Scanner ID
+      responses:
+        '200':
+          description: 成功删除Scanner
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    type: null
+                  message:
+                    type: string
+                    example: 删除Scanner成功
+
+  /api/scanner/register:
+    post:
+      summary: 注册Scanner
+      description: 如果Scanner已存在则更新状态为在线，如果不存在则创建新Scanner
+      tags: [Scanner管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id
+                - port
+              properties:
+                id:
+                  type: string
+                  description: Scanner ID
+                port:
+                  type: integer
+                  description: 端口号
+      responses:
+        '200':
+          description: 成功注册Scanner
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Scanner'
+                  message:
+                    type: string
+                    example: 注册Scanner成功
+
+  /api/scanner/{id}/gateway:
+    post:
+      summary: 设置Scanner关联的Gateway
+      tags: [Scanner管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: Scanner ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - gatewayId
+              properties:
+                gatewayId:
+                  type: string
+                  description: Gateway ID
+      responses:
+        '200':
+          description: 成功设置Scanner关联的Gateway
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Scanner'
+                  message:
+                    type: string
+                    example: 设置Scanner Gateway成功
+        '404':
+          description: Scanner不存在
+        '400':
+          description: 指定的Gateway不存在
+
+  /api/scanner/{id}/nds:
+    post:
+      summary: 设置Scanner关联的NDS
+      description: 只能设置已关联Gateway的NDS列表中的NDS
+      tags: [Scanner管理]
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+          description: Scanner ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - ndsIds
+              properties:
+                ndsIds:
+                  type: array
+                  items:
+                    type: integer
+                  description: NDS ID列表
+      responses:
+        '200':
+          description: 成功设置Scanner关联的NDS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    $ref: '#/components/schemas/Scanner'
+                  message:
+                    type: string
+                    example: 设置Scanner NDS成功
+        '404':
+          description: Scanner不存在
+        '400':
+          description: |
+            可能的错误：
+            1. Scanner未关联Gateway，无法设置NDS
+            2. 存在无效的NDS ID
+            3. 存在不在Gateway NDS列表中的NDS ID
+            4. 存在重复的NDS关联
