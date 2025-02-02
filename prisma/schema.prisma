@@ -33,11 +33,14 @@ model ndsList {
   Protocol   String @default("SFTP") @db.VarChar(20)
   Account    String @db.VarChar(100)
   Password   String @db.VarChar(100)
+  PoolSize   Int    @default(5)
   MRO_Path   String @default("/MR/MRO/") @db.VarChar(250)
   MRO_Filter String @default("^/MR/MRO/[^/]+/[^/]+_MRO_[^/]+.zip$") @db.VarChar(250)
   MDT_Path   String @default("/MDT/") @db.VarChar(250)
   MDT_Filter String @default("^/MDT/[^/]+/CSV/LOG-MDT/.*_LOG-MDT_.*.zip$") @db.VarChar(250)
   Switch     Int    @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
   gatewayLinks GatewayNDSLink[]
   scannerLinks ScannerNDSLink[]
 

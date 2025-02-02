@@ -3,11 +3,15 @@ components:
     NDS:
       type: object
       required:
-        - id
         - Name
         - Address
+        - Protocol
         - Account
         - Password
+        - MRO_Path
+        - MRO_Filter
+        - MDT_Path
+        - MDT_Filter
       properties:
         id:
           type: integer
@@ -32,6 +36,10 @@ components:
         Password:
           type: string
           description: 密码
+        PoolSize:
+          type: integer
+          description: 池大小
+          default: 5
         MRO_Path:
           type: string
           description: MRO路径
