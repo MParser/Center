@@ -54,25 +54,25 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, swaggerOptions));
 // 自动加载路由
 const routesDir = path.join(__dirname, 'routes');
 fs.readdirSync(routesDir).forEach(async (file) => {
-    // 跳过非.ts 和 .js 文件
-    if (!file.endsWith('.ts') && !file.endsWith('.js')) {
-        return;
+    // 生产环境中只加载 .js 文件，跳过 .d.ts 文件
+    if (!file.endsWith(".js") || file.endsWith(".d.ts")) {
+    return;
     }
 
     try {
-        // 动态导入路由模块
-        const routeModule = await import(path.join(routesDir, file));
-        const router = routeModule.default;
+    // 动态导入路由模块
+    const routeModule = await import(path.join(routesDir, file));
+    const router = routeModule.default;
 
-        if (router) {
-            // 优先使用模块中定义的路由路径，如果没有则使用文件名
-            const routePath = routeModule.routePath || `/${path.parse(file).name}`;
-            // 注册路由
-            app.use(`/api${routePath}`, router);
-            logger.info(`已加载路由: ${routePath} (${file})`);
-        }
+    if (router) {
+        // 优先使用模块中定义的路由路径，如果没有则使用文件名
+        const routePath = routeModule.routePath || `/${path.parse(file).name}`;
+        // 注册路由
+        app.use(`/api${routePath}`, router);
+        logger.info(`已加载路由: ${routePath} (${file})`);
+    }
     } catch (error) {
-        logger.error(`加载路由失败 ${file}:`, error);
+    logger.error(`加载路由失败 ${file}:`, error);
     }
 });
 
