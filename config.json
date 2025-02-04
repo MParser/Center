@@ -6,16 +6,16 @@
     "description": "MParser Center",
     "host": "0.0.0.0",
     "port": 9002,
-    "env": "development"
+    "env": "production"
   },
   "log": {
-    "level": "debug"
+    "level": "info"
   },
   "mysql": {
-    "host": "localhost",
-    "port": 3306,
+    "host": "192.127.121.100",
+    "port": 10306,
     "user": "root",
-    "password": "242520",
-    "database": "mparser_dev"
+    "password": "gmcc@123",
+    "database": "mparser"
   }
 }
