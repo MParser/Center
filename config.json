@@ -6,10 +6,17 @@
     "description": "MParser Center",
     "host": "0.0.0.0",
     "port": 9002,
-    "env": "production"
+    "env": "development"
   },
   "log": {
     "level": "info"
+  },
+  "mysql_dev": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "242520",
+    "database": "mparser"
   },
   "mysql": {
     "host": "192.127.121.100",
@@ -17,5 +24,13 @@
     "user": "root",
     "password": "gmcc@123",
     "database": "mparser"
+  },
+  "redis": {
+    "host": "127.0.0.1",
+    "port": 6379,
+    "password": "",
+    "database": 0,
+    "maxMemoryGB": 32,
+    "maxMemoryPolicy": "noeviction"
   }
 }

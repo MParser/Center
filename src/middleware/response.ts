@@ -96,14 +96,14 @@ declare global {
     namespace Express {
         // noinspection JSUnusedGlobalSymbols
         interface Response {
-            success: <T>(data?: T | null, message?: string) => void;
-            error: (message?: string, code?: number) => void;
-            badRequest: (message?: string) => void;
-            unauthorized: (message?: string) => void;
-            forbidden: (message?: string) => void;
-            notFound: (message?: string) => void;
-            internalError: (message?: string) => void;
-            customError: (message: string, httpCode?: number) => void;
+            success: <T>(data?: T | null, message?: string) => void; // 成功
+            error: (message?: string, code?: number) => void; // 错误
+            badRequest: (message?: string) => void; // 常用错误
+            unauthorized: (message?: string) => void; // 未授权
+            forbidden: (message?: string) => void; // 禁止访问
+            notFound: (message?: string) => void; // 资源不存在
+            internalError: (message?: string) => void; // 服务器内部错误
+            customError: (message: string, httpCode?: number) => void; // 自定义错误
         }
     }
 }

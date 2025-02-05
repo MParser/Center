@@ -13,6 +13,15 @@ const mysql_config = {
     database: config.get('mysql.database', 'mparser'),
 };
 
+if (config.get('app.env', 'development') === 'development') {
+    mysql_config.host = config.get('mysql_dev.host', 'localhost');
+    mysql_config.port = config.get('mysql_dev.port', 3306);
+    mysql_config.user = config.get('mysql_dev.user', 'root');
+    mysql_config.password = config.get('mysql_dev.password', '');
+    mysql_config.database = config.get('mysql_dev.database', 'mparser');
+}
+
+
 // 创建 Prisma 客户端实例
 const mysql = new PrismaClient({
     datasources: {

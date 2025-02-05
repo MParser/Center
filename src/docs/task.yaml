@@ -1,0 +1,257 @@
+components:
+  schemas:
+    Task:
+      type: object
+      required:
+        - name
+        - data_type
+      properties:
+        id:
+          type: integer
+          description: 任务ID
+        name:
+          type: string
+          description: 任务名称
+        data_type:
+          type: string
+          description: 任务类型（MRO/MDT）
+        status:
+          type: integer
+          description: 状态（0未处理 1处理完成）
+          default: 0
+        remark:
+          type: string
+          description: 任务备注
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新时间
+
+    EnbTask:
+      type: object
+      required:
+        - enodebid
+        - data_type
+        - start_time
+        - end_time
+      properties:
+        id:
+          type: integer
+          description: 基站任务ID
+        taskId:
+          type: integer
+          description: 所属任务ID
+        enodebid:
+          type: string
+          description: 基站ID
+        data_type:
+          type: string
+          description: 数据类型（MRO/MDT）
+        start_time:
+          type: string
+          format: date-time
+          description: 开始时间
+        end_time:
+          type: string
+          format: date-time
+          description: 结束时间
+        parsed:
+          type: integer
+          description: 解析状态（0未完成 1已完成）
+          default: 0
+        status:
+          type: integer
+          description: 状态（0未处理 1完成）
+          default: 0
+        trigger_check:
+          type: integer
+          description: 是否需要触发检查（0需要 1不需要）
+          default: 0
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新时间
+
+    TaskCreate:
+      type: object
+      required:
+        - name
+        - data_type
+        - start_time
+        - end_time
+        - enodebids
+      properties:
+        name:
+          type: string
+          description: 任务名称
+        data_type:
+          type: string
+          description: 任务类型（MRO/MDT）
+        start_time:
+          type: string
+          format: date-time
+          description: 任务开始时间
+        end_time:
+          type: string
+          format: date-time
+          description: 任务结束时间
+        remark:
+          type: string
+          description: 任务备注
+        enodebids:
+          type: array
+          description: 基站ID列表
+          items:
+            type: string
+            description: 基站ID
+
+    TaskDetail:
+      allOf:
+        - $ref: '#/components/schemas/Task'
+        - type: object
+          properties:
+            enb_tasks:
+              type: array
+              description: 关联的基站任务列表
+              items:
+                $ref: '#/components/schemas/EnbTask'
+
+paths:
+  /api/task:
+    get:
+      summary: 获取任务列表
+      tags: [任务管理]
+      responses:
+        200:
+          description: 成功返回任务列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+    post:
+      summary: 创建任务
+      tags: [任务管理]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreate'
+      responses:
+        200:
+          description: 成功创建任务
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task:
+                    $ref: '#/components/schemas/Task'
+                  enbTasksCount:
+                    type: integer
+                    description: 创建的基站任务数量
+
+  /api/task/{id}:
+    get:
+      summary: 获取任务详情
+      tags: [任务管理]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: 任务ID
+      responses:
+        200:
+          description: 成功返回任务详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDetail'
+        404:
+          description: 任务不存在
+
+    delete:
+      summary: 删除任务
+      tags: [任务管理]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: 任务ID
+      responses:
+        200:
+          description: 成功删除任务
+        404:
+          description: 任务不存在
+
+  /api/task/check:
+    get:
+      summary: 检查指定基站在指定时间是否有任务
+      tags:
+        - Task
+      parameters:
+        - name: enodebid
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 基站ID
+        - name: time
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: 检查时间点
+      responses:
+        '200':
+          description: 检查成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: 在指定时间范围内存在任务
+                  data:
+                    type: object
+                    properties:
+                      hasTask:
+                        type: boolean
+                        description: 是否存在任务
+                      taskInfo:
+                        type: object
+                        nullable: true
+                        properties:
+                          enodebid:
+                            type: string
+                            description: 基站ID
+                          start_time:
+                            type: string
+                            format: date-time
+                            description: 任务开始时间
+                          end_time:
+                            type: string
+                            format: date-time
+                            description: 任务结束时间
+                          trigger_check:
+                            type: integer
+                            description: 是否已触发检查

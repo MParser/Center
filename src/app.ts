@@ -54,9 +54,11 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, swaggerOptions));
 // 自动加载路由
 const routesDir = path.join(__dirname, 'routes');
 fs.readdirSync(routesDir).forEach(async (file) => {
-    // 生产环境中只加载 .js 文件，跳过 .d.ts 文件
-    if (!file.endsWith(".js") || file.endsWith(".d.ts")) {
-    return;
+    // 开发环境加载.ts文件，生产环境加载.js文件
+    const isDev = config.get('app.env', 'development') === 'development';
+    if ((isDev && !file.endsWith('.ts')) || (!isDev && !file.endsWith('.js')) || file.endsWith('.d.ts')) {
+        logger.debug(`忽略路由文件 ${file}`);
+        return;
     }
 
     try {
