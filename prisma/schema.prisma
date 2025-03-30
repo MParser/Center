@@ -138,6 +138,8 @@ model taskList {
   id        Int      @id @default(autoincrement())
   name      String   @db.VarChar(100) // 任务名称
   data_type String   @db.VarChar(20) // 任务类型 MRO/MDT
+  start_time DateTime // 任务开始时间
+  end_time  DateTime // 任务结束时间
   status    Int      @default(0) // 状态 0未处理 1处理完成
   remark    String?  @db.VarChar(500) // 任务备注，长文本类型，最大500字节
   createdAt DateTime @default(now())
@@ -167,4 +169,24 @@ model enbTaskList {
   @@index([trigger_check])
   @@index([enodebid, data_type, parsed, status], name: "idx_enb_task_composite")
   @@map("enb_task-list")
+}
+
+// cell_data列表模型
+
+model cellData {
+  CGI         String   @id @db.VarChar(64) // 小区CGI, 唯一
+  eNodeBID    Int      @db.Int // 基站ID
+  PCI         Int      @db.Int // 物理小区标识
+  Azimuth     Int?     @db.Int // 方位角
+  Earfcn      Int      @db.Int // 频点编号
+  Freq        Float    @db.Double // 频率
+  eNBName     String?  @db.VarChar(200) // 基站名称
+  userLabel   String?  @db.VarChar(200) // 用户标签
+  Longitude   Float    @db.Double // 经度
+  Latitude    Float  @db.Double // 纬度
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([CGI])
+  @@index([eNodeBID])
+  @@map("cell_data")
 }

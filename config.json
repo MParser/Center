@@ -15,12 +15,12 @@
     "host": "127.0.0.1",
     "port": 3306,
     "user": "root",
-    "password": "242520",
+    "password": "gmcc@123",
     "database": "mparser"
   },
   "mysql": {
-    "host": "192.127.121.100",
-    "port": 10306,
+    "host": "127.0.0.1",
+    "port": 3306,
     "user": "root",
     "password": "gmcc@123",
     "database": "mparser"
@@ -28,7 +28,7 @@
   "redis": {
     "host": "127.0.0.1",
     "port": 6379,
-    "password": "",
+    "password": "gmcc@123",
     "database": 0,
     "maxMemoryGB": 32,
     "maxMemoryPolicy": "noeviction"

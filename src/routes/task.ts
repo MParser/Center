@@ -9,6 +9,12 @@ const router = Router();
 // 获取任务列表
 router.get('/', TaskController.list);
 
+// 检查时间范围
+router.get('/check', TaskController.checkTime);
+
+// 获取去重时间范围 getTimeRange
+router.get('/getTimeRange', TaskController.getTimeRange);
+
 // 获取任务详情
 router.get('/:id', TaskController.get);
 
@@ -18,7 +24,5 @@ router.post('/', TaskController.create);
 // 删除任务
 router.delete('/:id', TaskController.delete);
 
-// 检查时间范围
-router.get('/check', TaskController.checkTime);
 
 export default router;

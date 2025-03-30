@@ -51,6 +51,26 @@ export class TaskController {
     }
 
     /**
+     * 获取任务时间范围
+     */
+    static async getTimeRange(req: Request, res: Response): Promise<void> {
+        try {
+            // 直接在数据库中进行去重查询
+            const uniqueTimeRanges = await mysql.$queryRaw`
+                SELECT DISTINCT start_time, end_time 
+                FROM \`task-list\`
+                ORDER BY start_time DESC
+            `;
+            
+            res.success(uniqueTimeRanges, '获取任务时间范围成功');
+            
+        } catch (error: any) {
+            logger.error('获取任务时间范围失败:', error);
+            res.internalError('获取任务时间范围失败');
+        }
+    }
+
+    /**
      * 获取任务详情（包括关联的基站任务）
      */
     static async get(req: Request, res: Response): Promise<void> {
@@ -59,7 +79,7 @@ export class TaskController {
             
             // 获取任务信息和关联的基站任务
             const task = await mysql.taskList.findUnique({
-                where: { id }
+                where: { id: id }
             });
 
             if (!task) {
@@ -99,7 +119,9 @@ export class TaskController {
                     data: {
                         name: data.name,
                         data_type: data.data_type,
-                        remark: data.remark
+                        remark: data.remark,
+                        start_time: data.start_time,
+                        end_time: data.end_time
                     }
                 });
 

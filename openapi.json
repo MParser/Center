@@ -2203,9 +2203,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Task"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Task"
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "获取任务列表成功"
+                    }
                   }
                 }
               }
@@ -2236,12 +2249,25 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "task": {
-                      "$ref": "#/components/schemas/Task"
-                    },
-                    "enbTasksCount": {
+                    "code": {
                       "type": "integer",
-                      "description": "创建的基站任务数量"
+                      "example": 200
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "task": {
+                          "$ref": "#/components/schemas/Task"
+                        },
+                        "enbTasksCount": {
+                          "type": "integer",
+                          "description": "创建的基站任务数量"
+                        }
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "创建任务成功"
                     }
                   }
                 }
@@ -2274,7 +2300,20 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TaskDetail"
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/TaskDetail"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "获取任务详情成功"
+                    }
+                  }
                 }
               }
             }
@@ -2302,7 +2341,27 @@
         ],
         "responses": {
           "200": {
-            "description": "成功删除任务"
+            "description": "成功删除任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "data": {
+                      "type": null
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "删除任务成功"
+                    }
+                  }
+                }
+              }
+            }
           },
           "404": {
             "description": "任务不存在"
@@ -2314,7 +2373,7 @@
       "get": {
         "summary": "检查指定基站在指定时间是否有任务",
         "tags": [
-          "Task"
+          "任务管理"
         ],
         "parameters": [
           {
@@ -2381,6 +2440,60 @@
                             "trigger_check": {
                               "type": "integer",
                               "description": "是否已触发检查"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/task/getTimeRange": {
+      "get": {
+        "summary": "获取所有任务时间范围",
+        "tags": [
+          "任务管理"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取时间范围",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "example": 200
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "成功获取时间范围"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "timeRanges": {
+                          "type": "array",
+                          "description": "时间范围列表",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "start_time": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "开始时间"
+                              },
+                              "end_time": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "结束时间"
+                              }
                             }
                           }
                         }

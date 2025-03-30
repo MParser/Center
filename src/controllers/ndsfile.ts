@@ -90,7 +90,7 @@ export class NDSFileController {
      */
     static async filterFiles(req: Request, res: Response): Promise<void> {
         try {
-            const {ndsId, file_paths } = req.body;
+            const {ndsId, data_type, file_paths } = req.body;
             if (!Array.isArray(file_paths) || file_paths.length === 0) {
                 res.badRequest('请提供有效的文件路径列表');
                 return;
@@ -101,7 +101,7 @@ export class NDSFileController {
             }
 
             // 读取未完成任务的时间范围
-            const time_maps = await mysql.enbTaskList.findMany({
+            const time_maps = await mysql.taskList.findMany({
                 where: { status: 0 },
                 select: { start_time: true, end_time: true },
                 distinct: ['start_time', 'end_time']
@@ -142,7 +142,7 @@ export class NDSFileController {
 
             // 查询数据库中的文件记录,parsed != -1
             const files_map = await mysql.ndsFileList.findMany({
-                where: { ndsId, parsed: { not: -1 } },
+                where: { ndsId, data_type, parsed: { not: -1 } },
                 select: { file_path: true },
                 distinct: ['file_path']
             });
