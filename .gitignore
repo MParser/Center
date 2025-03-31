@@ -48,3 +48,5 @@ build/
 
 */migrations/
 /*.tar
+config.json
+.env
