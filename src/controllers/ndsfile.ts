@@ -28,7 +28,7 @@ const REDIS_HIGH_MEMORY_THRESHOLD = 90;  // 高内存阈值
 const REDIS_LOW_MEMORY_THRESHOLD = 50;   // 低内存阈值
 const BATCH_SIZE = 10000;                // 批处理大小
 
-interface NDSFileWithTask {
+interface NDSFileWithTask { 
     file_hash: string;      // @db.VarChar(128)
     ndsId: number;          // @db.Int
     file_path: string;      // @db.VarChar(255)
@@ -46,14 +46,15 @@ interface NDSFileWithTask {
 }
 
 export class NDSFileController {
-    /**
-     * 生成文件哈希值
-     * @param ndsId NDS ID
-     * @param file_path 文件路径
-     * @param sub_file_name 子文件名
-     * @returns 哈希值
-     */
+
     private static generateFileHash(ndsId: number, file_path: string, sub_file_name: string): string {
+        /**
+         * 生成文件哈希值
+         * @param ndsId NDS ID
+         * @param file_path 文件路径
+         * @param sub_file_name 子文件名d                                                                                                                                         
+         * @returns 哈希值
+         */
         const data = `${ndsId}${file_path}${sub_file_name}`;
         return crypto.createHash('md5').update(data).digest('hex');
     }
@@ -86,7 +87,7 @@ export class NDSFileController {
     }
 
     /**
-     * 过滤文件
+     * 过滤文件路径列表
      */
     static async filterFiles(req: Request, res: Response): Promise<void> {
         try {
@@ -100,7 +101,9 @@ export class NDSFileController {
                 return;
             }
 
-            // 读取未完成任务的时间范围
+
+            // 从任务时间段范围进行清洗数据
+            //  -- 读取未完成任务的时间范围
             const time_maps = await mysql.taskList.findMany({
                 where: { status: 0 },
                 select: { start_time: true, end_time: true },
@@ -112,7 +115,7 @@ export class NDSFileController {
                 return;
             }
 
-            // 提取时间并过滤不在任务时间范围内的文件
+            // -- 提取时间并过滤不在任务时间范围内的文件
             const timeRegex = /\d{14}/;
             const filteredPaths = file_paths.reduce<string[]>((acc, path) => {
                 const match = path.match(timeRegex);
@@ -128,9 +131,9 @@ export class NDSFileController {
                     parseInt(timeStr.substring(12, 14))
                 );
                 
-                // 检查是否在任务时间范围内
+                // -- 检查是否在任务时间范围内
                 if (time_maps.some(item => fileTime >= item.start_time && fileTime <= item.end_time)) {
-                    acc.push(path);
+                    acc.push(path); // 如果在任务时间范围内，加入结果
                 }
                 return acc;
             }, []);
@@ -140,7 +143,7 @@ export class NDSFileController {
                 return;
             }
 
-            // 查询数据库中的文件记录,parsed != -1
+            // 查询数据库中的文件记录,parsed != -1   后续改成Redis,加快查询速度
             const files_map = await mysql.ndsFileList.findMany({
                 where: { ndsId, data_type, parsed: { not: -1 } },
                 select: { file_path: true },

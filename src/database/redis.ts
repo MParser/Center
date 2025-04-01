@@ -82,10 +82,10 @@ class RedisManager extends EventEmitter {
             try {
                 const maxMemoryGB = config.get('redis.maxMemoryGB', 8);  // 默认8GB
                 const maxMemoryPolicy = config.get('redis.maxMemoryPolicy', 'noeviction');
-                const maxMemoryBytes = maxMemoryGB * 1024 * 1024 * 1024;
+                const maxMemoryBytes = maxMemoryGB * 1024 * 1024 * 1024; // 转换为字节
 
-                await this.redis.config('SET', 'maxmemory', maxMemoryBytes.toString());
-                await this.redis.config('SET', 'maxmemory-policy', maxMemoryPolicy);
+                await this.redis.config('SET', 'maxmemory', maxMemoryBytes.toString()); // 设置最大内存
+                await this.redis.config('SET', 'maxmemory-policy', maxMemoryPolicy);  // 设置淘汰策略 noeviction 表示不进行淘汰
 
                 logger.info('Redis配置已设置:', {
                     maxMemory: `${maxMemoryGB}GB`,
