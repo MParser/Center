@@ -103,7 +103,7 @@ export class NDSFileController {
 
 
             // 从任务时间段范围进行清洗数据
-            //  -- 读取未完成任务的时间范围
+            //  -- 读取未完成任务的时间范围（Status = 0）
             const time_maps = await mysql.taskList.findMany({
                 where: { status: 0 },
                 select: { start_time: true, end_time: true },
@@ -307,7 +307,7 @@ export class NDSFileController {
                         });
 
                         // 添加到Redis队列
-                        await redis.batchEnqueue(validItemsWithTypes.map(item => ({
+                        await redis.batchTaskEnqueue(validItemsWithTypes.map(item => ({
                             NDSID: item.ndsId,
                             data: {
                                 ndsId: item.ndsId,
@@ -484,7 +484,7 @@ export class NDSFileController {
 
                         try {
                             // 添加到Redis
-                            await redis.batchEnqueue(tasks.map(task => ({
+                            await redis.batchTaskEnqueue(tasks.map(task => ({
                                 NDSID: task.ndsId,
                                 data: {
                                     ndsId: task.ndsId,

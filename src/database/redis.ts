@@ -33,7 +33,8 @@ interface MemoryInfo {
 class RedisManager extends EventEmitter {
     private static instance: RedisManager;
     private redis!: Redis;
-    private readonly QUEUE_PREFIX = 'nds_queue:';
+    private readonly TASK_QUEUE_PREFIX = 'task_for_nds:';
+    private readonly SCAN_LIST_PREFIX = "scan_for_nds:";
     private isConnected = false;
     private reconnectAttempts = 0;
     private readonly maxReconnectAttempts = 20;
@@ -146,19 +147,26 @@ class RedisManager extends EventEmitter {
     }
 
     /**
-     * 获取队列的key
+     * 获取任务队列的key
      * @param ndsId NDSID（支持数字或字符串）
      */
-    private getQueueKey(ndsId: string | number): string {
-        return `${this.QUEUE_PREFIX}${ndsId.toString()}`;
+    private getTaskQueueKey(ndsId: string | number): string {
+        return `${this.TASK_QUEUE_PREFIX}${ndsId.toString()}`;
     }
 
     /**
-     * 批量插入队列数据
-     * @param items 要插入的数据项数组
-     * @returns 成功和失败的数量
+     * 获取扫描记录列表表名
+     * @param ndsId NDSID（支持数字或字符串）
      */
-    public async batchEnqueue(items: QueueItem[]): Promise<BatchResult> {
+    private getScanListKey(ndsId: string | number): string {
+        return  `${this.SCAN_LIST_PREFIX}${ndsId.toString()}`
+    }
+
+    /**
+     * 批量插入已扫描文件清单
+     * @param items 要插入的数据项数组
+     */
+    public async batchScanEnqueue(items: QueueItem[]){
         try {
             await this.ensureConnection();
 
@@ -176,9 +184,53 @@ class RedisManager extends EventEmitter {
 
             // 批量插入每个队列
             for (const [ndsId, dataList] of Object.entries(ndsGroups)) {
-                const queueKey = this.getQueueKey(ndsId);
+                const scanQueueKey = this.getScanListKey(ndsId)
                 dataList.forEach(data => {
-                    pipeline.rpush(queueKey, JSON.stringify(data));  // 使用 RPUSH, 新数据插入尾部
+                    pipeline.sadd(scanQueueKey, data.file_path); // 使用SADD添加扫描文件记录表
+                });
+            }
+
+            const results = await pipeline.exec();
+            if (!results) {
+                throw new Error('Pipeline execution failed');
+            }
+
+        }catch (error){
+            logger.error('Redis批量入队失败:', error);
+            throw error; 
+        }
+    }
+
+
+
+    /**
+     * 批量插入队列数据
+     * @param items 要插入的数据项数组
+     * @returns 成功和失败的数量
+     */
+    public async batchTaskEnqueue(items: QueueItem[]): Promise<BatchResult> {
+        try {
+            await this.ensureConnection();
+
+            const pipeline = this.redis.pipeline();
+            const ndsGroups: { [key: string]: any[] } = {};
+
+            // 按 NDSID 分组，确保转换为字符串
+            items.forEach(item => {
+                const ndsId = item.NDSID.toString();
+                if (!ndsGroups[ndsId]) {
+                    ndsGroups[ndsId] = [];
+                }
+                ndsGroups[ndsId].push(item.data);
+            });
+
+            // 批量插入每个队列
+            for (const [ndsId, dataList] of Object.entries(ndsGroups)) {
+                const taskQueueKey = this.getTaskQueueKey(ndsId);
+                const scanQueueKey = this.getScanListKey(ndsId)
+                dataList.forEach(data => {
+                    pipeline.rpush(taskQueueKey, JSON.stringify(data));  // 使用 RPUSH, 新数据插入尾部
+                    pipeline.sadd(scanQueueKey, data.file_path); // 使用SADD添加扫描文件记录表
                 });
             }
 
@@ -198,14 +250,14 @@ class RedisManager extends EventEmitter {
     }
 
     /**
-     * 获取指定队列的长度
+     * 获取指定任务队列的长度
      * @param ndsId NDSID（支持数字或字符串）
      * @returns 队列长度
      */
-    public async getQueueLength(ndsId: string | number): Promise<number> {
+    public async getTaskQueueLength(ndsId: string | number): Promise<number> {
         try {
             await this.ensureConnection();
-            const queueKey = this.getQueueKey(ndsId);
+            const queueKey = this.getTaskQueueKey(ndsId);
             return await this.redis.llen(queueKey);
         } catch (error) {
             logger.error(`获取队列 NDS[${ndsId}] 长度失败:`, error);
