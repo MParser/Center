@@ -126,19 +126,21 @@ export const responseHandler = (req: Request, res: Response, next: NextFunction)
     res.badRequest = function(message?: string): void {
         this.json(errors.BAD_REQUEST(message, req.requestInfo.request_id));
     };
-
+    // 添加未授权响应方法
     res.unauthorized = function(message?: string): void {
         this.json(errors.UNAUTHORIZED(message, req.requestInfo.request_id));
     };
-
+    // 添加禁止访问响应方法
     res.forbidden = function(message?: string): void {
         this.json(errors.FORBIDDEN(message, req.requestInfo.request_id));
     };
 
+    // 添加资源不存在响应方法
     res.notFound = function(message?: string): void {
         this.json(errors.NOT_FOUND(message, req.requestInfo.request_id));
     };
 
+    // 添加服务器内部错误响应方法
     res.internalError = function(message?: string): void {
         this.json(errors.INTERNAL_ERROR(message, req.requestInfo.request_id));
     };

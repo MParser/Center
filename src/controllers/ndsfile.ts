@@ -28,6 +28,7 @@ const REDIS_HIGH_MEMORY_THRESHOLD = 90;  // 高内存阈值
 const REDIS_LOW_MEMORY_THRESHOLD = 50;   // 低内存阈值
 const BATCH_SIZE = 10000;                // 批处理大小
 
+// 定义NDSFileWithTask接口,用于存储从MySQL中查询出来的结果
 interface NDSFileWithTask { 
     file_hash: string;      // @db.VarChar(128)
     ndsId: number;          // @db.Int
@@ -100,7 +101,14 @@ export class NDSFileController {
                 res.badRequest('无效的NDS ID');
                 return;
             }
-
+            
+            // 先使用Redis过滤掉已经存在的文件路径
+            const nonExistingPaths = await redis.filterNonExistingPaths(ndsId, file_paths);
+            
+            if (nonExistingPaths.length === 0) {
+                res.success({ missing: [] }, '所有文件已在Redis中记录');
+                return;
+            }
 
             // 从任务时间段范围进行清洗数据
             //  -- 读取未完成任务的时间范围（Status = 0）
@@ -117,7 +125,7 @@ export class NDSFileController {
 
             // -- 提取时间并过滤不在任务时间范围内的文件
             const timeRegex = /\d{14}/;
-            const filteredPaths = file_paths.reduce<string[]>((acc, path) => {
+            const filteredPaths = nonExistingPaths.reduce<string[]>((acc, path) => {
                 const match = path.match(timeRegex);
                 if (!match) return acc;
 
@@ -143,40 +151,10 @@ export class NDSFileController {
                 return;
             }
 
-            // 查询数据库中的文件记录,parsed != -1   后续改成Redis,加快查询速度
-            const files_map = await mysql.ndsFileList.findMany({
-                where: { ndsId, data_type, parsed: { not: -1 } },
-                select: { file_path: true },
-                distinct: ['file_path']
-            });
-
-            // 处理已删除和新增的文件
-            const existingPathsSet = new Set(files_map.map(f => f.file_path));
-            const newFilePathsSet = new Set(file_paths);
-            
-            // 更新已删除的文件状态
-            const deletedPaths = files_map
-                .map(f => f.file_path)
-                .filter(path => !newFilePathsSet.has(path));
-
-            if (deletedPaths.length > 0) {
-                // 分批处理，每批500条
-                const batchSize = 500;
-                for (let i = 0; i < deletedPaths.length; i += batchSize) {
-                    const batch = deletedPaths.slice(i, i + batchSize);
-                    await mysql.ndsFileList.updateMany({
-                        where: { ndsId, file_path: { in: batch } },
-                        data: { parsed: -1 }
-                    });
-                }
-            }
-
-            // 返回在时间范围内且不存在于数据库的文件
-            const results = {
-                missing: filteredPaths.filter(path => !existingPathsSet.has(path))
-            };
-
-            res.success(results, '文件路径检查完成');
+            // 直接返回过滤后的结果，不再查询MySQL数据库
+            res.success({
+                missing: filteredPaths
+            }, '文件路径检查完成');
         } catch (error: any) {
             logger.error('检查文件路径失败:', error);
             res.internalError('检查文件路径失败');
@@ -227,22 +205,17 @@ export class NDSFileController {
         try {
             const items: NDSFileItem[] = req.body;
             
-            // 检查Redis内存使用情况
+            // 1. 检查Redis内存使用情况，如果内存过高直接返回错误
             const memoryInfo = await redis.getMemoryInfo();
             const isMemoryHigh = memoryInfo.ratio >= REDIS_HIGH_MEMORY_THRESHOLD;
             
             if (isMemoryHigh) {
                 redisFlag.setFlag(true);
-                logger.info('Redis内存使用率过高，设置全局标记为1');
+                logger.info('Redis内存使用率过高');
+                // 直接返回内存过高的错误，客户端不再传入数据
+                res.internalError('0x0001'); //Redis内存使用率过高，无法处理请求
+                return;
             }
-
-            // 获取有效的任务列表
-            const validTasks = await mysql.enbTaskList.findMany({
-                where: {
-                    parsed: 0,
-                    status: 0
-                }
-            });
 
             // 转换数据类型
             const itemsWithTypes = items.map(item => ({
@@ -255,59 +228,83 @@ export class NDSFileController {
                 file_time: new Date(item.file_time)
             }));
 
-            // 生成文件哈希
-            const itemsWithHash = itemsWithTypes.map(item => ({
-                ...item,
-                file_hash: this.generateFileHash(item.ndsId, item.file_path, item.sub_file_name),
-                parsed: 0  // 默认设置为未处理
-            }));
+            // 获取有效的任务列表
+            const validTasks = await mysql.enbTaskList.findMany({
+                where: {
+                    parsed: 0,
+                    status: 0
+                }
+            });
+
+            // 生成文件哈希并预先确定parsed值
+            const itemsWithHash = itemsWithTypes.map(item => {
+                // 检查是否符合任务条件
+                const isValidForTask = validTasks.some(task => 
+                    item.enodebid === task.enodebid &&
+                    item.data_type === task.data_type &&
+                    item.file_time >= task.start_time &&
+                    item.file_time <= task.end_time
+                );
+                
+                return {
+                    ...item,
+                    file_hash: this.generateFileHash(item.ndsId, item.file_path, item.sub_file_name),
+                    parsed: isValidForTask ? 1 : 0  // 符合任务条件的直接设置为1，否则为0
+                };
+            });
+
+            // 2. 先调用batchScanEnqueue记录所有file_path
+            await redis.batchScanEnqueue(itemsWithHash.map(item => ({
+                NDSID: item.ndsId,
+                data: {
+                    file_path: item.file_path
+                }
+            })));
+
+            // 3. 匹配CellData表，过滤掉不存在的eNodeBID记录
+            // 获取所有传入的eNodeBID
+            const enodebIds = [...new Set(itemsWithHash.map(item => item.enodebid))];
+            
+            // 查询CellData表中存在的eNodeBID
+            const existingEnodebIds = await mysql.cellData.findMany({
+                where: {
+                    eNodeBID: {
+                        in: enodebIds.map(id => parseInt(id, 10))
+                    }
+                },
+                select: {
+                    eNodeBID: true
+                },
+                distinct: ['eNodeBID']
+            });
+            
+            // 创建存在的eNodeBID集合
+            const validEnodebIdSet = new Set(existingEnodebIds.map(item => item.eNodeBID.toString()));
+            
+            // 过滤掉不存在于CellData表中的记录
+            const filteredItems = itemsWithHash.filter(item => validEnodebIdSet.has(item.enodebid));
+            
+            if (filteredItems.length === 0) {
+                res.success('没有有效的记录，所有eNodeBID在CellData表中不存在');
+                return;
+            }
 
             // 使用事务确保数据一致性
             await mysql.$transaction(async (tx) => {
                 // 批量插入所有数据到MySQL（已存在的会被跳过）
                 const result = await tx.ndsFileList.createMany({
-                    data: itemsWithHash,
+                    data: filteredItems,
                     skipDuplicates: true  // 跳过已存在的记录
                 });
 
-                // 过滤出符合任务条件的记录
-                const validItems = itemsWithHash.filter(item =>
-                    validTasks.some(task =>
-                        item.enodebid === task.enodebid &&
-                        item.data_type === task.data_type &&
-                        new Date(item.file_time) >= new Date(task.start_time) &&
-                        new Date(item.file_time) <= new Date(task.end_time)
-                    )
-                );
+                // 过滤出符合任务条件的记录（parsed=1的记录）
+                const validItems = filteredItems.filter(item => item.parsed === 1);
 
-                // 转换数据类型
-                const validItemsWithTypes = validItems.map(item => ({
-                    ...item,
-                    ndsId: Number(item.ndsId),
-                    header_offset: Number(item.header_offset),
-                    compress_size: Number(item.compress_size),
-                    file_size: Number(item.file_size),
-                    flag_bits: Number(item.flag_bits),
-                    file_time: new Date(item.file_time)
-                }));
-
-                // 如果有符合条件的记录且Redis内存未超限，则更新状态并添加到Redis
-                if (validItemsWithTypes.length > 0 && !isMemoryHigh) {
+                // 如果有符合条件的记录，则添加到Redis
+                if (validItems.length > 0) {
                     try {
-                        // 更新符合条件记录的状态为已入队(parsed=1)
-                        await tx.ndsFileList.updateMany({
-                            where: {
-                                file_hash: {
-                                    in: validItemsWithTypes.map(item => item.file_hash)
-                                }
-                            },
-                            data: {
-                                parsed: 1
-                            }
-                        });
-
                         // 添加到Redis队列
-                        await redis.batchTaskEnqueue(validItemsWithTypes.map(item => ({
+                        await redis.batchTaskEnqueue(validItems.map(item => ({
                             NDSID: item.ndsId,
                             data: {
                                 ndsId: item.ndsId,
@@ -331,16 +328,16 @@ export class NDSFileController {
 
                 return {
                     total: result.count,
-                    valid: validItemsWithTypes.length,
-                    queued: !isMemoryHigh ? validItemsWithTypes.length : 0
+                    filtered: filteredItems.length,
+                    original: itemsWithHash.length,
+                    valid: validItems.length,
+                    queued: validItems.length
                 };
             }).then(result => {
                 res.json({
                     code: 0,
                     data: result,
-                    msg: isMemoryHigh ? 
-                        '数据已入库，但由于Redis内存占用过高，符合条件的记录暂未加入队列' : 
-                        `成功入库${result.total}条记录，其中${result.valid}条符合任务条件，已加入队列${result.queued}条`
+                    msg: `成功入库${result.total}条记录，原始数据${result.original}条，过滤后${result.filtered}条，其中${result.valid}条符合任务条件，已加入队列${result.queued}条`
                 });
             });
         } catch (error) {
@@ -348,6 +345,8 @@ export class NDSFileController {
             res.internalError('批量添加NDS文件记录失败');
         }
     }
+
+
 
     /**
      * 设置指定file_hash的解析状态

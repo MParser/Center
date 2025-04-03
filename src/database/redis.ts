@@ -330,6 +330,51 @@ class RedisManager extends EventEmitter {
         }
     }
 
+    /**
+     * 筛选不在扫描记录集合中的文件路径
+     * @param ndsId NDSID（支持数字或字符串）
+     * @param filePaths 要检查的文件路径数组
+     * @returns 不存在于集合中的文件路径数组
+     */
+    public async filterNonExistingPaths(ndsId: string | number, filePaths: string[]): Promise<string[]> {
+        try {
+            if (!filePaths || filePaths.length === 0) {
+                return [];
+            }
+
+            await this.ensureConnection();
+            const scanQueueKey = this.getScanListKey(ndsId);
+            const pipeline = this.redis.pipeline();
+            const nonExistingPaths: string[] = [];
+            
+            // 使用pipeline批量检查每个路径是否存在于集合中
+            filePaths.forEach(path => {
+                pipeline.sismember(scanQueueKey, path);
+            });
+            
+            const results = await pipeline.exec();
+            if (!results) {
+                throw new Error('Pipeline execution failed');
+            }
+            
+            // 处理结果，找出不存在的路径
+            results.forEach((result, index) => {
+                const [err, exists] = result;
+                if (err) {
+                    logger.warn(`检查路径 ${filePaths[index]} 时出错:`, err);
+                } else if (exists === 0) { // 0表示不存在于集合中
+                    nonExistingPaths.push(filePaths[index]);
+                }
+            });
+            
+            logger.debug(`筛选完成: 共检查${filePaths.length}个路径，发现${nonExistingPaths.length}个不存在的路径`);
+            return nonExistingPaths;
+        } catch (error) {
+            logger.error(`筛选不存在的文件路径失败 [NDS:${ndsId}]:`, error);
+            throw error;
+        }
+    }
+
 }
 
 // 导出单例实例
