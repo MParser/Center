@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import redis from '../database/redis'; // 添加redis导入
 import redisFlag from '../utils/redisFlag';
 import enbTaskMap from '../utils/enbTaskMap';
+import { log } from 'console';
 
 // 定义NDSFileTask请求体接口
 interface NDSFileItem {
@@ -106,6 +107,7 @@ export class NDSFileController { // NDSFile任务控制类
                 res.success([]);
                 return;
             }
+            logger.info("Check Redis");
             
             // 过滤非任务时间文件和数据类型
             const tasks = await mysql.taskList.findMany({
@@ -138,7 +140,7 @@ export class NDSFileController { // NDSFile任务控制类
                 );
                 
                 // 检查是否在任务时间范围内, 如果在任务时间范围内，加入结果
-                if (tasks.some(item => fileTime >= item.start_time && fileTime <= item.end_time)) {
+                if (tasks.some(item => fileTime.getTime() >= item.start_time.getTime() && fileTime.getTime() <= item.end_time.getTime())) {
                     acc.push(path);
                 }
                 return acc;
