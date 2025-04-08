@@ -6,6 +6,7 @@ import mysql from '../database/mysql';
 import logger from '../utils/logger';
 import crypto from 'crypto';
 import redis from '../database/redis'; // 添加redis导入
+import { error } from 'console';
 
 
 // 定义NDSFileTask请求体接口
@@ -55,6 +56,8 @@ const cellDataState: CellDataState = {
 };
 
 export class NDSFileController { // NDSFile任务控制类
+
+
     private static generateFileHash(ndsId: number, file_path: string, sub_file_name: string): string {
         /**
          * 生成文件哈希值
@@ -367,6 +370,104 @@ export class NDSFileController { // NDSFile任务控制类
             res.internalError('缓存eNodeBID出错');
         }
     }
+
+    public static async processUnhandledTasks(_req?: Request, res?: Response): Promise<void> {
+        /**
+         * 处理未处理的任务
+         * @returns 处理结果
+         */
+        try {
+            logger.info('搜寻未发送任务');
+            // 检查Redis状态,如果负荷过高，取消处理
+            const memoryInfo = await redis.getMemoryInfo();
+            const isMemoryHigh = memoryInfo.ratio >= REDIS_HIGH_MEMORY_THRESHOLD;
+            if (isMemoryHigh) {
+                if (res) res.customError('Redis内存负荷过高，无法处理请求', 429);
+                return;
+            }
+
+            // 使用联合查询直接获取符合条件的文件记录
+            const validFiles = await mysql.$queryRaw<NDSFileWithTask[]>`
+                SELECT DISTINCT nfl.*
+                FROM nds_file_list nfl
+                INNER JOIN enb_task_list etl
+                ON nfl.enodebid = etl.enodebid
+                AND nfl.data_type = etl.data_type
+                AND nfl.file_time >= etl.start_time
+                AND nfl.file_time <= etl.end_time
+                WHERE nfl.parsed = 0
+                AND etl.parsed = 0
+                AND etl.status = 0
+                LIMIT ${NDSFileController.BATCH_SIZE}
+            `;
+
+            if (validFiles.length === 0) {
+                if (res) res.success('没有符合任务条件的文件');
+                return;
+            }
+
+            // 使用事务确保数据一致性
+            await mysql.$transaction(async (tx) => {
+                // 更新文件状态为已处理
+                await tx.ndsFileList.updateMany({
+                    where: {
+                        file_hash: {
+                            in: validFiles.map(file => file.file_hash)
+                        }
+                    },
+                    data: {
+                        parsed: 1
+                    }
+                });
+
+                // 添加到Redis队列
+                await redis.batchTaskEnqueue(validFiles.map(file => ({
+                    NDSID: file.ndsId,
+                    data: {
+                        ndsId: file.ndsId,
+                        file_path: file.file_path,
+                        file_time: file.file_time.toISOString(),
+                        data_type: file.data_type,
+                        sub_file_name: file.sub_file_name,
+                        header_offset: file.header_offset,
+                        compress_size: file.compress_size,
+                        file_size: file.file_size,
+                        flag_bits: file.flag_bits,
+                        enodebid: file.enodebid,
+                        file_hash: file.file_hash
+                    }
+                })));
+            });
+
+            if (res) res.success({
+                processed: validFiles.length
+            });
+
+        } catch (error: any) {
+            logger.error('处理未处理任务出错:', error);
+            if (res) res.internalError('处理未处理任务出错');
+        }
+    }
+
+        // 定义定时器间隔（20分钟）
+        private static readonly TASK_CHECK_INTERVAL = 20 * 60 * 1000;
+        // 定义每批处理的最大数量
+        private static readonly BATCH_SIZE = 100000;
     
+        // 静态初始化块
+        static async startSchedule(): Promise<void> {
+            // 启动定时任务
+            logger.info('NDSFiles 定时任务已启动');
+            NDSFileController.processUnhandledTasks().catch(error => {logger.error('定时任务执行失败:', error)});
+            setInterval(async () => {
+                try {
+                    NDSFileController.processUnhandledTasks().catch(error => {logger.error('定时任务执行失败:', error)});
+                } catch (error) {
+                    logger.error('定时处理未处理任务出错:', error);
+                }
+            }, this.TASK_CHECK_INTERVAL);
+        }
 
 }
+NDSFileController.startSchedule();
+export default NDSFileController;

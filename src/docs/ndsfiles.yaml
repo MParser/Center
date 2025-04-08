@@ -1,0 +1,178 @@
+components:
+  schemas:
+    NDSFile:
+      type: object
+      required:
+        - ndsId
+        - file_path
+        - file_time
+        - data_type
+        - sub_file_name
+        - enodebid
+      properties:
+        file_hash:
+          type: string
+          description: 文件哈希值（由系统自动生成）
+        ndsId:
+          type: integer
+          description: NDS ID
+        file_path:
+          type: string
+          description: 文件路径
+        file_time:
+          type: string
+          format: date-time
+          description: 文件时间
+        data_type:
+          type: string
+          description: 数据类型
+        sub_file_name:
+          type: string
+          description: 子文件名
+        header_offset:
+          type: integer
+          description: 头部偏移量
+          default: 0
+        compress_size:
+          type: integer
+          description: 压缩大小
+          default: 0
+        file_size:
+          type: integer
+          description: 文件大小
+          default: 0
+        flag_bits:
+          type: integer
+          description: 标志位
+          default: 0
+        enodebid:
+          type: string
+          description: 基站ID
+        parsed:
+          type: integer
+          description: 解析状态
+          default: 0
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新时间
+
+paths:
+  /api/ndsfiles/filter:
+    post:
+      summary: 过滤文件路径
+      tags: [NDS文件管理]
+      description: |
+        根据NDS ID和数据类型过滤文件路径列表，返回符合条件的文件路径。
+        - 使用Redis过滤已存在的文件
+        - 过滤非任务时间范围内的文件
+        - 过滤不匹配数据类型的文件
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - ndsId
+                - data_type
+                - file_paths
+              properties:
+                ndsId:
+                  type: integer
+                  description: NDS ID
+                data_type:
+                  type: string
+                  description: 数据类型
+                file_paths:
+                  type: array
+                  items:
+                    type: string
+                  description: 需要过滤的文件路径列表
+      responses:
+        '200':
+          description: 过滤成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: 文件路径过滤完成
+                  data:
+                    type: array
+                    items:
+                      type: string
+                    description: 符合条件的文件路径列表
+        '400':
+          description: 请求参数错误
+        '429':
+          description: Redis内存负荷过高
+        '500':
+          description: 服务器内部错误
+
+  /api/ndsfiles/batchAddTasks:
+    post:
+      summary: 批量添加NDS文件任务
+      tags: [NDS文件管理]
+      description: |
+        批量添加NDS文件任务记录。
+        - file_hash 由系统根据 ndsId、file_path 和 sub_file_name 自动生成
+        - 如果文件已存在（file_hash相同）则跳过
+        - 支持高并发写入，使用事务确保数据一致性
+        - 自动从文件路径提取时间信息
+        - 过滤不存在于CellData表中的eNodeBID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/NDSFile'
+      responses:
+        '200':
+          description: 批量添加成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  message:
+                    type: string
+                    example: 批量添加NDS文件任务完成
+                  data:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                        description: 成功入库的记录数
+                      filtered:
+                        type: integer
+                        description: 过滤后的记录数
+                      original:
+                        type: integer
+                        description: 原始数据数量
+                      valid:
+                        type: integer
+                        description: 符合任务条件的记录数
+                      queued:
+                        type: integer
+                        description: 成功加入队列的记录数
+        '400':
+          description: 请求参数错误
+        '429':
+          description: Redis内存负荷过高
+        '500':
+          description: 服务器内部错误
