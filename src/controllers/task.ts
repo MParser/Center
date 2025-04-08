@@ -58,7 +58,7 @@ export class TaskController {
             // 直接在数据库中进行去重查询
             const uniqueTimeRanges = await mysql.$queryRaw`
                 SELECT DISTINCT start_time, end_time 
-                FROM \`task-list\`
+                FROM \`task_list\`
                 ORDER BY start_time DESC
             `;
             

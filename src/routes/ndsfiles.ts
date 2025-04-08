@@ -13,6 +13,7 @@ export const routePath = "/ndsfiles";
 // 查找不存在的文件路径
 router.post("/filter", NDSFileController.filterFiles);
 
+router.post("/batchAddTasks", NDSFileController.batchAddTasks);
 
 
 export default router;

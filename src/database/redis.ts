@@ -249,6 +249,8 @@ class RedisManager extends EventEmitter {
         }
     }
 
+    
+
     /**
      * 获取指定任务队列的长度
      * @param ndsId NDSID（支持数字或字符串）
@@ -371,6 +373,45 @@ class RedisManager extends EventEmitter {
             return nonExistingPaths;
         } catch (error) {
             logger.error(`筛选不存在的文件路径失败 [NDS:${ndsId}]:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * 批量删除已扫描文件清单
+     * @param items 要删除的数据项数组
+     */
+    public async batchScanDequeue(items: QueueItem[]): Promise<void> {
+        try {
+            await this.ensureConnection();
+
+            const pipeline = this.redis.pipeline();
+            const ndsGroups: { [key: string]: any[] } = {};
+
+            // 按 NDSID 分组，确保转换为字符串
+            items.forEach(item => {
+                const ndsId = item.NDSID.toString();
+                if (!ndsGroups[ndsId]) {
+                    ndsGroups[ndsId] = [];
+                }
+                ndsGroups[ndsId].push(item.data);
+            });
+
+            // 批量删除每个队列中的记录
+            for (const [ndsId, dataList] of Object.entries(ndsGroups)) {
+                const scanQueueKey = this.getScanListKey(ndsId);
+                dataList.forEach(data => {
+                    pipeline.srem(scanQueueKey, data.file_path); // 使用SREM移除扫描文件记录
+                });
+            }
+
+            const results = await pipeline.exec();
+            if (!results) {
+                throw new Error('Pipeline execution failed');
+            }
+
+        } catch (error) {
+            logger.error('Redis批量删除失败:', error);
             throw error;
         }
     }

@@ -15,8 +15,8 @@ const app: Express = express();
 const port: number = config.get('app.port', 9002);
 
 // 基础中间件配置
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // 日志中间件
 app.use((req: Request, _res: Response, next) => {

@@ -44,7 +44,7 @@ model ndsList {
   gatewayLinks GatewayNDSLink[]
   scannerLinks ScannerNDSLink[]
 
-  @@map("nds-list")
+  @@map("nds_list")
 }
 
 // Gateway和NDS的关联表
@@ -74,7 +74,7 @@ model scannerList {
   gateway   gatewayList?     @relation(fields: [gatewayId], references: [id])
   ndsLinks  ScannerNDSLink[]
 
-  @@map("scanner-list")
+  @@map("scanner_list")
 }
 
 // Scanner和NDS的关联表
@@ -103,7 +103,7 @@ model parserList {
   updatedAt DateTime     @updatedAt
   gateway   gatewayList? @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
 
-  @@map("parser-list")
+  @@map("parser_list")
 }
 
 // ndsFile列表模型
@@ -130,7 +130,7 @@ model ndsFileList {
   @@index([parsed])
   @@index([file_time])
   @@index([ndsId, data_type, file_time, enodebid, parsed], name: "idx_nds_file_composite")
-  @@map("nds_file-list")
+  @@map("nds_file_list")
 }
 
 // task列表模型
@@ -145,7 +145,7 @@ model taskList {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([id])
-  @@map("task-list")
+  @@map("task_list")
 }
 
 // enb_task列表模型
@@ -168,7 +168,7 @@ model enbTaskList {
   @@index([status])
   @@index([trigger_check])
   @@index([enodebid, data_type, parsed, status], name: "idx_enb_task_composite")
-  @@map("enb_task-list")
+  @@map("enb_task_list")
 }
 
 // cell_data列表模型
