@@ -6,7 +6,8 @@ import mysql from '../database/mysql';
 import logger from '../utils/logger';
 import crypto from 'crypto';
 import redis from '../database/redis'; // 添加redis导入
-import { error } from 'console';
+import enbTaskMap from '../utils/enbTaskMap';
+import { extractTimeFromPath } from '../utils/timeUtils';
 
 
 // 定义NDSFileTask请求体接口
@@ -24,7 +25,7 @@ interface NDSFileItem {
 }
 
 // 定义NDSFileWithTask接口,用于存储从MySQL中查询出来的结果
-interface NDSFileWithTask { 
+interface NDSFileWithTask {
     file_hash: string;      // @db.VarChar(128)
     ndsId: number;          // @db.Int
     file_path: string;      // @db.VarChar(255)
@@ -63,35 +64,28 @@ export class NDSFileController { // NDSFile任务控制类
          * 生成文件哈希值
          * @param ndsId NDS ID
          * @param file_path 文件路径
-         * @param sub_file_name 子文件名                                                                                                                           
+         * @param sub_file_name 子文件名
          * @returns 哈希值
          */
         const data = `${ndsId}${file_path}${sub_file_name}`;
         return crypto.createHash('md5').update(data).digest('hex');
     }
 
-    public static async getTasksTimeMap(_req: Request, res: Response): Promise<void> {
+
+    public static async cleanExpiredScanRecords(_req?: Request, res?: Response): Promise<void> {
         /**
-         * 获取所有NDS文件的时间映射
-         * @returns 时间映射
-        */
-        try { 
-            // 从mysql.taskList表中查询所有任务时间并去重
-            const time_maps = await mysql.taskList.findMany({
-                where: { status: 0 },
-                select: { start_time: true, end_time: true },
-                distinct: ['start_time', 'end_time']
-            });
-            // 返回结果
-            res.success(time_maps);
-            
-            
-        }catch (error: any) {
-            logger.error('获取任务时间范围出错:', error);
-            res.internalError('获取任务时间范围出错');
+         * 清理过期的扫描记录
+         * @returns 清理结果
+         */
+        try {
+            const result = await redis.cleanExpiredScanRecords();
+            if (res) res.success(result);
+        } catch (error: any) {
+            logger.error('清理过期扫描记录出错:', error);
+            if (res) res.internalError('清理过期扫描记录出错');
         }
     }
-    
+
     public static async filterFiles(req: Request, res: Response): Promise<void> {
         /**
          * 过滤NDS文件
@@ -101,7 +95,7 @@ export class NDSFileController { // NDSFile任务控制类
             const { ndsId, data_type, file_paths } = req.body; // 获取请求体参数
             if (!ndsId || !data_type || !Array.isArray(file_paths) || file_paths.length === 0) {
                 res.badRequest('参数错误');
-                return;    
+                return;
             }
             // 检查Redis状态,如果负荷过高，取消处理
             const memoryInfo = await redis.getMemoryInfo();
@@ -117,10 +111,10 @@ export class NDSFileController { // NDSFile任务控制类
                 res.success([]);
                 return;
             }
-            
+
             // 过滤非任务时间文件和数据类型
             const tasks = await mysql.taskList.findMany({
-                where: { 
+                where: {
                     status: 0,
                     data_type: data_type // 添加data_type过滤条件
                 },
@@ -133,21 +127,11 @@ export class NDSFileController { // NDSFile任务控制类
                 return;
             }
 
-            // 使用正则表达式提取文件路径中的时间信息
-            const timeRegex = /\d{14}/;
+            // 使用timeUtils提取文件路径中的时间信息
             const filteredPaths = nonExistingPaths.reduce<string[]>((acc, path) => {
-                const match = path.match(timeRegex);
-                if (!match) return acc; // 如果没有匹配到时间信息，跳过
-                const timeStr = match[0];
-                const fileTime = new Date(
-                    parseInt(timeStr.substring(0, 4)), // 年份
-                    parseInt(timeStr.substring(4, 6)) - 1, // 月份（JavaScript中的月份从0开始）
-                    parseInt(timeStr.substring(6, 8)), // 日期
-                    parseInt(timeStr.substring(8, 10)), // 小时
-                    parseInt(timeStr.substring(10, 12)), // 分钟
-                    parseInt(timeStr.substring(12, 14)) // 秒数
-                );
-                
+                const fileTime = extractTimeFromPath(path);
+                if (!fileTime) return acc; // 如果无法提取时间信息，跳过
+
                 // 检查是否在任务时间范围内, 如果在任务时间范围内，加入结果
                 if (tasks.some(item => fileTime.getTime() >= item.start_time.getTime() && fileTime.getTime() <= item.end_time.getTime())) {
                     acc.push(path);
@@ -175,7 +159,7 @@ export class NDSFileController { // NDSFile任务控制类
             const items: NDSFileItem[] = req.body;
             if (!Array.isArray(items) || items.length === 0) {
                 res.badRequest('参数错误');
-                return; 
+                return;
             }
 
             // 检查Redis状态,如果负荷过高，取消处理
@@ -189,30 +173,20 @@ export class NDSFileController { // NDSFile任务控制类
             const itemsWithTypes = items.map(item => {
                 // 处理日期：尝试从file_path中提取日期，如果无法提取则使用当前日期
                 let file_time = new Date(item.file_time);
-                
+
                 // 检查日期是否有效
                 if (isNaN(file_time.getTime())) {
-                    // 尝试从文件路径中提取日期 (格式如 /MR/MRO/2025-04-07/FDD-LTE_MRO_ZTE_OMC1_20250407084500.zip)
-                    const timeRegex = /\d{14}/;
-                    const match = item.file_path.match(timeRegex);
-                    
-                    if (match) {
-                        const timeStr = match[0];
-                        file_time = new Date(
-                            parseInt(timeStr.substring(0, 4)),    // 年份
-                            parseInt(timeStr.substring(4, 6)) - 1, // 月份（JavaScript中的月份从0开始）
-                            parseInt(timeStr.substring(6, 8)),    // 日期
-                            parseInt(timeStr.substring(8, 10)),   // 小时
-                            parseInt(timeStr.substring(10, 12)),  // 分钟
-                            parseInt(timeStr.substring(12, 14))   // 秒数
-                        );
+                    // 尝试从文件路径中提取日期
+                    const extractedTime = extractTimeFromPath(item.file_path);
+                    if (extractedTime) {
+                        file_time = extractedTime;
                     } else {
                         // 如果无法从文件名提取，则使用当前日期
                         file_time = new Date();
                         logger.warn(`无法解析文件时间，使用当前时间作为替代: ${item.file_path}`);
                     }
                 }
-                
+
                 return {
                     ...item,
                     ndsId: Number(item.ndsId),
@@ -224,24 +198,19 @@ export class NDSFileController { // NDSFile任务控制类
                 };
             });
 
-            // 获取有效的任务列表
-            const validTasks = await mysql.enbTaskList.findMany({
-                where: {
-                    parsed: 0,
-                    status: 0
-                }
-            });
+            // 从enbTaskMap获取有效的任务列表
+            const validTasks = enbTaskMap.getAllTasks();
 
             // 生成文件哈希并预先确定parsed值
             const itemsWithHash = itemsWithTypes.map(item => {
                 // 检查是否符合任务条件
-                const isValidForTask = validTasks.some(task => 
+                const isValidForTask = validTasks.some(task =>
                     item.enodebid === task.enodebid &&
                     item.data_type === task.data_type &&
                     item.file_time >= task.start_time &&
                     item.file_time <= task.end_time
                 );
-                
+
                 return {
                     ...item,
                     file_hash: NDSFileController.generateFileHash(item.ndsId, item.file_path, item.sub_file_name),
@@ -263,14 +232,14 @@ export class NDSFileController { // NDSFile任务控制类
                 cellDataState.enbids = await mysql.cellData.findMany({select: { eNodeBID: true},distinct: ['eNodeBID']});
                 cellDataState.lastRefreshTime = new Date();
             }
-            
+
 
             // 创建CellData中的eNodeBID集合
             const validEnodebIdSet = new Set(cellDataState.enbids.map(item => item.eNodeBID.toString()));
-            
+
             // 过滤掉不存在于CellData表中的记录
             const filteredItems = itemsWithHash.filter(item => validEnodebIdSet.has(item.enodebid));
-            
+
             if (filteredItems.length === 0) {
                 res.success('没有有效的记录，所有eNodeBID在CellData表中不存在');
                 return;
@@ -293,7 +262,7 @@ export class NDSFileController { // NDSFile任务控制类
                     enodebid: item.enodebid,
                     parsed: item.parsed
                 }));
-                
+
                 // 批量插入所有数据到MySQL（已存在的会被跳过）
                 const result = await tx.ndsFileList.createMany({
                     data: dbModelItems,
@@ -352,11 +321,11 @@ export class NDSFileController { // NDSFile任务控制类
         }
     }
 
-    public static async updateCellDataState(_req: Request, res: Response): Promise<void> {
+    public static async updateCellDataState(_req?: Request, res?: Response): Promise<void> {
         /**
          * 更新CellData状态
          * @returns 更新结果
-         */ 
+         */
         try {
             cellDataState.enbids = await mysql.cellData.findMany({
                 select: {
@@ -367,7 +336,7 @@ export class NDSFileController { // NDSFile任务控制类
             cellDataState.lastRefreshTime = new Date();
         }catch (error: any) {
             logger.error('缓存eNodeBID出错:', error);
-            res.internalError('缓存eNodeBID出错');
+            if (res) res.internalError('缓存eNodeBID出错');
         }
     }
 
@@ -377,7 +346,6 @@ export class NDSFileController { // NDSFile任务控制类
          * @returns 处理结果
          */
         try {
-            logger.info('搜寻未发送任务');
             // 检查Redis状态,如果负荷过高，取消处理
             const memoryInfo = await redis.getMemoryInfo();
             const isMemoryHigh = memoryInfo.ratio >= REDIS_HIGH_MEMORY_THRESHOLD;
@@ -453,21 +421,49 @@ export class NDSFileController { // NDSFile任务控制类
         private static readonly TASK_CHECK_INTERVAL = 20 * 60 * 1000;
         // 定义每批处理的最大数量
         private static readonly BATCH_SIZE = 100000;
-    
+
         // 静态初始化块
         static async startSchedule(): Promise<void> {
-            // 启动定时任务
-            logger.info('NDSFiles 定时任务已启动');
-            NDSFileController.processUnhandledTasks().catch(error => {logger.error('定时任务执行失败:', error)});
-            setInterval(async () => {
+            // 首次执行定时15秒后运行
+            setTimeout(async () => {
                 try {
-                    NDSFileController.processUnhandledTasks().catch(error => {logger.error('定时任务执行失败:', error)});
+                    // noinspection DuplicatedCode
+                    NDSFileController.processUnhandledTasks()
+                        .then(() => {logger.info('NDSFiles - 扫描未处理任务完成')})
+                        .catch(error => {logger.error('NDSFiles - 扫描未处理任务失败:', error)});
+                    NDSFileController.cleanExpiredScanRecords()
+                        .then(() => {logger.info('NDSFiles - 清理Redis过期数据完成')})
+                        .catch(error => {logger.error('NDSFiles - 清理Redis过期数据失败:', error)});
+                    NDSFileController.updateCellDataState()
+                        .then(() => {logger.info('NDSFiles - 缓存eNodeBID完成')})
+                        .catch(error => {logger.error('NDSFiles - 缓存eNodeBID失败:', error)});
+
+                    setInterval(async () => {
+                        try {
+                            // noinspection DuplicatedCode
+                            NDSFileController.processUnhandledTasks()
+                                .then(() => {logger.info('NDSFiles - 扫描未处理任务完成')})
+                                .catch(error => {logger.error('NDSFiles - 扫描未处理任务失败:', error)});
+                            NDSFileController.cleanExpiredScanRecords()
+                                .then(() => {logger.info('NDSFiles - 清理Redis过期数据完成')})
+                                .catch(error => {logger.error('NDSFiles - 清理Redis过期数据失败:', error)});
+                            NDSFileController.updateCellDataState()
+                                .then(() => {logger.info('NDSFiles - 缓存eNodeBID完成')})
+                                .catch(error => {logger.error('NDSFiles - 缓存eNodeBID失败:', error)});
+
+                        } catch (error) {
+                            logger.error('定时处理未处理任务出错:', error);
+                        }
+                    }, this.TASK_CHECK_INTERVAL);
+
                 } catch (error) {
-                    logger.error('定时处理未处理任务出错:', error);
+                    logger.error('NDSFiles 定时任务执行失败:', error);
                 }
-            }, this.TASK_CHECK_INTERVAL);
+            }, 15000); // 15秒后执行首次任务
         }
 
 }
+// noinspection JSIgnoredPromiseFromCall
 NDSFileController.startSchedule();
+
 export default NDSFileController;

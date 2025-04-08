@@ -7,6 +7,7 @@ import logger from '../utils/logger';
 
 interface EnbTaskInfo {
     enodebid: string;
+    data_type: string;
     start_time: Date;
     end_time: Date;
     trigger_check: number;
@@ -79,6 +80,7 @@ class EnbTaskMap {
                 },
                 select: {
                     enodebid: true,
+                    data_type: true,
                     start_time: true,
                     end_time: true,
                     trigger_check: true
@@ -92,6 +94,7 @@ class EnbTaskMap {
             for (const task of tasks) {
                 newMap.set(task.enodebid, {
                     enodebid: task.enodebid,
+                    data_type: task.data_type,
                     start_time: task.start_time,
                     end_time: task.end_time,
                     trigger_check: task.trigger_check

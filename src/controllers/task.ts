@@ -5,7 +5,6 @@ import { Request, Response } from 'express';
 import mysql from '../database/mysql';
 import logger from '../utils/logger';
 import enbTaskMap from '../utils/enbTaskMap';
-import taskChecker from '../utils/taskChecker';
 
 /**
  * 任务创建数据类型
@@ -53,7 +52,7 @@ export class TaskController {
     /**
      * 获取任务时间范围
      */
-    static async getTimeRange(req: Request, res: Response): Promise<void> {
+    static async getTimeRange(_req: Request, res: Response): Promise<void> {
         try {
             // 直接在数据库中进行去重查询
             const uniqueTimeRanges = await mysql.$queryRaw`
@@ -61,9 +60,9 @@ export class TaskController {
                 FROM \`task_list\`
                 ORDER BY start_time DESC
             `;
-            
+
             res.success(uniqueTimeRanges, '获取任务时间范围成功');
-            
+
         } catch (error: any) {
             logger.error('获取任务时间范围失败:', error);
             res.internalError('获取任务时间范围失败');
@@ -76,7 +75,7 @@ export class TaskController {
     static async get(req: Request, res: Response): Promise<void> {
         try {
             const id = parseInt(req.params.id);
-            
+
             // 获取任务信息和关联的基站任务
             const task = await mysql.taskList.findUnique({
                 where: { id: id }
@@ -205,7 +204,7 @@ export class TaskController {
 
             // 使用内存映射检查
             const hasTask = enbTaskMap.hasTaskInTimeRange(enodebid, checkTime);
-            
+
             if (hasTask) {
                 // 如果有任务，获取具体任务信息
                 const taskInfo = enbTaskMap.getTask(enodebid);
