@@ -45,6 +45,12 @@ interface NDSFileWithTask {
 // 定义内存阈值常量
 const REDIS_HIGH_MEMORY_THRESHOLD = 90;  // 高内存阈值
 
+// 定义Redis内存检查结果接口
+interface RedisMemoryCheckResult {
+    isMemoryHigh: boolean;
+    ratio: number;
+}
+
 // 定义Celldata状态接口
 interface CellDataState {
     enbids: { eNodeBID: number }[];  // 存储Celldata中的eNodeBID
@@ -57,28 +63,51 @@ const cellDataState: CellDataState = {
 };
 
 export class NDSFileController { // NDSFile任务控制类
+    // 定义定时器间隔（分钟）
+    private static readonly TASK_CHECK_INTERVAL = 20 * 60 * 1000;
+    // 定义每批处理的最大数量
+    private static readonly BATCH_SIZE = 100000;
+    // 定义CellData刷新间隔（分钟）
+    private static readonly CELL_DATA_REFRESH_INTERVAL = 10 * 60 * 1000;
+    // 定义NDS文件过期天数（天）
+    private static readonly NDS_FILE_EXPIRE_DAYS = 45;
+    // 定义redis scan_for_nds 数据过期时间(天)
+    private static readonly SCAN_FOR_NDS_EXPIRE_DAYS = 30;
 
+    /**
+     * 检查Redis内存状态
+     * @returns Redis内存检查结果
+     */
+    private static async checkRedisMemory(): Promise<RedisMemoryCheckResult> {
+        const memoryInfo = await redis.getMemoryInfo();
+        return {
+            isMemoryHigh: memoryInfo.ratio >= REDIS_HIGH_MEMORY_THRESHOLD,
+            ratio: memoryInfo.ratio
+        };
+    }
 
+    /**
+     * 生成文件哈希值
+     * @param ndsId NDS ID
+     * @param file_path 文件路径
+     * @param sub_file_name 子文件名
+     * @returns 哈希值
+     */
     private static generateFileHash(ndsId: number, file_path: string, sub_file_name: string): string {
-        /**
-         * 生成文件哈希值
-         * @param ndsId NDS ID
-         * @param file_path 文件路径
-         * @param sub_file_name 子文件名
-         * @returns 哈希值
-         */
         const data = `${ndsId}${file_path}${sub_file_name}`;
         return crypto.createHash('md5').update(data).digest('hex');
     }
 
 
+    /**
+     * 清理过期的扫描记录
+     * @param _req 请求对象（可选）
+     * @param res 响应对象（可选）
+     * @returns 清理结果
+     */
     public static async cleanExpiredScanRecords(_req?: Request, res?: Response): Promise<void> {
-        /**
-         * 清理过期的扫描记录
-         * @returns 清理结果
-         */
         try {
-            const result = await redis.cleanExpiredScanRecords();
+            const result = await redis.cleanExpiredScanRecords(NDSFileController.SCAN_FOR_NDS_EXPIRE_DAYS);
             if (res) res.success(result);
         } catch (error: any) {
             logger.error('清理过期扫描记录出错:', error);
@@ -86,20 +115,70 @@ export class NDSFileController { // NDSFile任务控制类
         }
     }
 
+    /**
+     * 清理过期的NDS文件记录
+     * @param _req 请求对象（可选）
+     * @param res 响应对象（可选）
+     * @returns 清理结果
+     */
+    public static async cleanExpiredNdsFiles(_req?: Request, res?: Response): Promise<void> {
+        try {
+            // 查询file_time的最大值作为基准, 使用MAX()函数获取最大值
+            const maxTimeResult = await mysql.ndsFileList.aggregate({
+                _max: {
+                    file_time: true
+                }
+            })
+
+            // 检查maxTime是否存在且不为null
+            if (maxTimeResult._max.file_time === null || maxTimeResult._max.file_time === undefined) {
+                logger.info('NDSFiles - 最大文件时间为空，无需清理');
+                if (res) res.success('最大文件时间为空，无需清理');
+                return;
+            }
+
+            // 计算过期时间
+            const maxTime = maxTimeResult._max.file_time;
+            const expireDate = new Date(maxTime);
+            expireDate.setDate(expireDate.getDate() - NDSFileController.NDS_FILE_EXPIRE_DAYS);
+
+            // 删除过期数据
+            const deleteResult = await mysql.ndsFileList.deleteMany({
+                where: {
+                    file_time: {
+                        lt: expireDate
+                    }
+                }
+            });
+
+            logger.info(`NDSFiles - 清理过期NDS文件记录完成，共删除${deleteResult.count}条记录`);
+            if (res) res.success({
+                deleted: deleteResult.count,
+                expireDate: expireDate.toISOString(),
+                maxTime: maxTime.toISOString()
+            });
+        } catch (error: any) {
+            logger.error('NDSFiles - 清理过期NDS文件记录出错:', error);
+            if (res) res.internalError('清理过期NDS文件记录出错');
+        }
+    }
+
+    /**
+     * 过滤NDS文件
+     * @param req 请求对象
+     * @param res 响应对象
+     * @returns 过滤后的NDS文件
+     */
     public static async filterFiles(req: Request, res: Response): Promise<void> {
-        /**
-         * 过滤NDS文件
-         * @returns 过滤后的NDS文件
-         */
         try {
             const { ndsId, data_type, file_paths } = req.body; // 获取请求体参数
             if (!ndsId || !data_type || !Array.isArray(file_paths) || file_paths.length === 0) {
                 res.badRequest('参数错误');
                 return;
             }
+            
             // 检查Redis状态,如果负荷过高，取消处理
-            const memoryInfo = await redis.getMemoryInfo();
-            const isMemoryHigh = memoryInfo.ratio >= REDIS_HIGH_MEMORY_THRESHOLD;
+            const { isMemoryHigh } = await NDSFileController.checkRedisMemory();
             if (isMemoryHigh) {
                 res.customError('Redis内存负荷过高，无法处理请求', 429);
                 return;
@@ -133,7 +212,10 @@ export class NDSFileController { // NDSFile任务控制类
                 if (!fileTime) return acc; // 如果无法提取时间信息，跳过
 
                 // 检查是否在任务时间范围内, 如果在任务时间范围内，加入结果
-                if (tasks.some(item => fileTime.getTime() >= item.start_time.getTime() && fileTime.getTime() <= item.end_time.getTime())) {
+                if (tasks.some(item => {
+                    const fileTimeMs = fileTime.getTime();
+                    return fileTimeMs >= item.start_time.getTime() && fileTimeMs <= item.end_time.getTime();
+                })) {
                     acc.push(path);
                 }
                 return acc;
@@ -141,20 +223,19 @@ export class NDSFileController { // NDSFile任务控制类
 
             // 返回结果
             res.success(filteredPaths);
-            return;
-
-        }catch (error: any) {
+        } catch (error: any) {
             logger.error('过滤NDS文件出错:', error);
             res.internalError('过滤NDS文件出错');
         }
-
     }
 
+    /**
+     * 批量添加NDS文件任务
+     * @param req 请求对象
+     * @param res 响应对象
+     * @returns 添加结果
+     */
     public static async batchAddTasks(req: Request, res: Response): Promise<void> {
-        /**
-         * 批量添加NDS文件任务
-         * @returns 添加结果
-         */
         try {
             const items: NDSFileItem[] = req.body;
             if (!Array.isArray(items) || items.length === 0) {
@@ -163,12 +244,12 @@ export class NDSFileController { // NDSFile任务控制类
             }
 
             // 检查Redis状态,如果负荷过高，取消处理
-            const memoryInfo = await redis.getMemoryInfo();
-            const isMemoryHigh = memoryInfo.ratio >= REDIS_HIGH_MEMORY_THRESHOLD;
+            const { isMemoryHigh } = await NDSFileController.checkRedisMemory();
             if (isMemoryHigh) {
                 res.customError('Redis内存负荷过高，无法处理请求', 429);
                 return;
             }
+            
             // 转换数据类型并处理无效日期
             const itemsWithTypes = items.map(item => {
                 // 处理日期：尝试从file_path中提取日期，如果无法提取则使用当前日期
@@ -204,12 +285,13 @@ export class NDSFileController { // NDSFile任务控制类
             // 生成文件哈希并预先确定parsed值
             const itemsWithHash = itemsWithTypes.map(item => {
                 // 检查是否符合任务条件
-                const isValidForTask = validTasks.some(task =>
-                    item.enodebid === task.enodebid &&
-                    item.data_type === task.data_type &&
-                    item.file_time >= task.start_time &&
-                    item.file_time <= task.end_time
-                );
+                const isValidForTask = validTasks.some(task => {
+                    const fileTime = item.file_time.getTime();
+                    return item.enodebid === task.enodebid &&
+                           item.data_type === task.data_type &&
+                           fileTime >= task.start_time.getTime() &&
+                           fileTime <= task.end_time.getTime();
+                });
 
                 return {
                     ...item,
@@ -217,6 +299,7 @@ export class NDSFileController { // NDSFile任务控制类
                     parsed: isValidForTask ? 1 : 0  // 符合任务条件的直接设置为1，否则为0
                 };
             });
+            
             // 先调用batchScanEnqueue记录所有file_path, 形成扫描记录
             await redis.batchScanEnqueue(itemsWithHash.map(item => ({
                 NDSID: item.ndsId,
@@ -225,14 +308,11 @@ export class NDSFileController { // NDSFile任务控制类
                 }
             })));
 
-            // 匹配CellData表，过滤掉不存在的eNodeBID记录
-
-            // 判断是否需要刷新CellData表（超过10分钟则进行刷新）
-            if (cellDataState.enbids.length === 0 || cellDataState.lastRefreshTime.getTime() + 600000 < Date.now()) {
-                cellDataState.enbids = await mysql.cellData.findMany({select: { eNodeBID: true},distinct: ['eNodeBID']});
-                cellDataState.lastRefreshTime = new Date();
+            // 判断是否需要刷新CellData表
+            if (cellDataState.enbids.length === 0 || 
+                cellDataState.lastRefreshTime.getTime() + NDSFileController.CELL_DATA_REFRESH_INTERVAL < Date.now()) {
+                await NDSFileController.updateCellDataState();
             }
-
 
             // 创建CellData中的eNodeBID集合
             const validEnodebIdSet = new Set(cellDataState.enbids.map(item => item.eNodeBID.toString()));
@@ -314,18 +394,19 @@ export class NDSFileController { // NDSFile任务控制类
                 };
             }).then(result => res.success(result));
 
-
-        }catch (error: any) {
+        } catch (error: any) {
             logger.error('批量添加NDS文件任务出错:', error);
             res.internalError(`批量添加NDS文件任务出错 ${error}`);
         }
     }
 
+    /**
+     * 更新CellData状态
+     * @param _req 请求对象（可选）
+     * @param res 响应对象（可选）
+     * @returns 更新结果
+     */
     public static async updateCellDataState(_req?: Request, res?: Response): Promise<void> {
-        /**
-         * 更新CellData状态
-         * @returns 更新结果
-         */
         try {
             cellDataState.enbids = await mysql.cellData.findMany({
                 select: {
@@ -334,7 +415,7 @@ export class NDSFileController { // NDSFile任务控制类
                 distinct: ['eNodeBID']
             });
             cellDataState.lastRefreshTime = new Date();
-        }catch (error: any) {
+        } catch (error: any) {
             logger.error('缓存eNodeBID出错:', error);
             if (res) res.internalError('缓存eNodeBID出错');
         }
@@ -417,11 +498,6 @@ export class NDSFileController { // NDSFile任务控制类
         }
     }
 
-        // 定义定时器间隔（20分钟）
-        private static readonly TASK_CHECK_INTERVAL = 20 * 60 * 1000;
-        // 定义每批处理的最大数量
-        private static readonly BATCH_SIZE = 100000;
-
         // 静态初始化块
         static async startSchedule(): Promise<void> {
             // 首次执行定时15秒后运行
@@ -437,6 +513,9 @@ export class NDSFileController { // NDSFile任务控制类
                     NDSFileController.updateCellDataState()
                         .then(() => {logger.info('NDSFiles - 缓存eNodeBID完成')})
                         .catch(error => {logger.error('NDSFiles - 缓存eNodeBID失败:', error)});
+                    NDSFileController.cleanExpiredNdsFiles()
+                        .then(() => {logger.info('NDSFiles - 清理过期NDS文件记录完成')})
+                        .catch(error => {logger.error('NDSFiles - 清理过期NDS文件记录失败:', error)});
 
                     setInterval(async () => {
                         try {
@@ -450,6 +529,9 @@ export class NDSFileController { // NDSFile任务控制类
                             NDSFileController.updateCellDataState()
                                 .then(() => {logger.info('NDSFiles - 缓存eNodeBID完成')})
                                 .catch(error => {logger.error('NDSFiles - 缓存eNodeBID失败:', error)});
+                            NDSFileController.cleanExpiredNdsFiles()
+                                .then(() => {logger.info('NDSFiles - 清理过期NDS文件记录完成')})
+                                .catch(error => {logger.error('NDSFiles - 清理过期NDS文件记录失败:', error)});
 
                         } catch (error) {
                             logger.error('定时处理未处理任务出错:', error);
