@@ -9,7 +9,7 @@ COPY package.json yarn.lock ./
 COPY prisma ./prisma
 COPY dist ./dist
 COPY config.json ./config.json
-
+COPY src/docs ./dist/docs
 
 # 仅安装生产环境依赖
 RUN yarn install --production --frozen-lockfile \

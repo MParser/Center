@@ -325,74 +325,153 @@ export class NDSFileController { // NDSFile任务控制类
                 return;
             }
 
-            // 使用事务确保数据一致性
-            await mysql.$transaction(async (tx) => {
-                // 过滤掉非数据库模型字段，只保留与ndsFileList模型匹配的字段
-                const dbModelItems = filteredItems.map(item => ({
-                    file_hash: item.file_hash,
-                    ndsId: item.ndsId,
-                    file_path: item.file_path,
-                    file_time: item.file_time,
-                    data_type: item.data_type,
-                    sub_file_name: item.sub_file_name,
-                    header_offset: item.header_offset,
-                    compress_size: item.compress_size,
-                    file_size: item.file_size,
-                    flag_bits: item.flag_bits,
-                    enodebid: item.enodebid,
-                    parsed: item.parsed
-                }));
+            // 过滤掉非数据库模型字段，只保留与ndsFileList模型匹配的字段
+            const dbModelItems = filteredItems.map(item => ({
+                file_hash: item.file_hash,
+                ndsId: item.ndsId,
+                file_path: item.file_path,
+                file_time: item.file_time,
+                data_type: item.data_type,
+                sub_file_name: item.sub_file_name,
+                header_offset: item.header_offset,
+                compress_size: item.compress_size,
+                file_size: item.file_size,
+                flag_bits: item.flag_bits,
+                enodebid: item.enodebid,
+                parsed: item.parsed
+            }));
 
-                // 批量插入所有数据到MySQL（已存在的会被跳过）
-                const result = await tx.ndsFileList.createMany({
-                    data: dbModelItems,
-                    skipDuplicates: true  // 跳过已存在的记录
-                });
+            // 过滤出符合任务条件的记录（parsed=1的记录）
+            const validItems = filteredItems.filter(item => item.parsed === 1);
 
-                // 过滤出符合任务条件的记录（parsed=1的记录）
-                const validItems = filteredItems.filter(item => item.parsed === 1);
+            // 定义批处理大小
+            const sqlBatchSize = NDSFileController.MAX_SQL_BATCH_SIZE;
+            const redisBatchSize = 200; // 减小Redis批处理大小，避免单个事务处理过多数据
+            const transactionBatchSize = 500; // 每个事务处理的最大记录数
+            
+            let totalInserted = 0;
+            let totalQueued = 0;
+            let transactionResults = [];
 
-                // 如果有符合条件的记录，则添加到Redis
-                if (validItems.length > 0) {
+            try {
+                // 分批处理数据，每批最多处理transactionBatchSize条记录
+                for (let i = 0; i < dbModelItems.length; i += transactionBatchSize) {
+                    const batchStart = Date.now();
+                    const currentBatch = dbModelItems.slice(i, i + transactionBatchSize);
+                    
+                    // 当前批次中符合任务条件的记录
+                    const currentValidItems = validItems.filter(item => 
+                        currentBatch.some(dbItem => dbItem.file_hash === item.file_hash)
+                    );
+                    
+                    logger.info(`NDSFiles - 开始处理第 ${i/transactionBatchSize + 1} 批数据，共 ${currentBatch.length} 条记录`);
+                    
                     try {
-                        // 添加到Redis队列
-                        await redis.batchTaskEnqueue(validItems.map(item => ({
-                            NDSID: item.ndsId,
-                            data: {
-                                ndsId: item.ndsId,
-                                file_path: item.file_path,
-                                file_time: item.file_time.toISOString(),
-                                data_type: item.data_type,
-                                sub_file_name: item.sub_file_name,
-                                header_offset: item.header_offset,
-                                compress_size: item.compress_size,
-                                file_size: item.file_size,
-                                flag_bits: item.flag_bits,
-                                enodebid: item.enodebid,
-                                file_hash: item.file_hash
+                        // 使用事务确保数据一致性
+                        const result = await mysql.$transaction(async (tx) => {
+                            let batchInserted = 0;
+                            
+                            // 分批插入数据到MySQL
+                            for (let j = 0; j < currentBatch.length; j += sqlBatchSize) {
+                                const sqlBatch = currentBatch.slice(j, j + sqlBatchSize);
+                                const insertResult = await tx.ndsFileList.createMany({
+                                    data: sqlBatch,
+                                    skipDuplicates: true  // 跳过已存在的记录
+                                });
+                                batchInserted += insertResult.count;
+                                
+                                // 记录每批处理进度
+                                logger.debug(`NDSFiles - 已插入 ${j + sqlBatch.length} / ${currentBatch.length} 条记录`);
                             }
-                        })));
-                    } catch (error) {
-                        logger.error('Redis入队失败，回滚MySQL状态:', error);
-                        // 删除redis中的数据
-                        await redis.batchScanDequeue(validItems.map(item => ({
-                            NDSID: item.ndsId,
-                            data: {
-                                file_path: item.file_path
+                            
+                            // 如果有符合条件的记录，则添加到Redis
+                            let batchQueued = 0;
+                            if (currentValidItems.length > 0) {
+                                // 分批添加到Redis队列
+                                for (let j = 0; j < currentValidItems.length; j += redisBatchSize) {
+                                    const redisBatch = currentValidItems.slice(j, j + redisBatchSize);
+                                    await redis.batchTaskEnqueue(redisBatch.map(item => ({
+                                        NDSID: item.ndsId,
+                                        data: {
+                                            ndsId: item.ndsId,
+                                            file_path: item.file_path,
+                                            file_time: item.file_time.toISOString(),
+                                            data_type: item.data_type,
+                                            sub_file_name: item.sub_file_name,
+                                            header_offset: item.header_offset,
+                                            compress_size: item.compress_size,
+                                            file_size: item.file_size,
+                                            flag_bits: item.flag_bits,
+                                            enodebid: item.enodebid,
+                                            file_hash: item.file_hash
+                                        }
+                                    })));
+                                    
+                                    batchQueued += redisBatch.length;
+                                    // 记录每批处理进度
+                                    logger.debug(`NDSFiles - 已入队 ${j + redisBatch.length} / ${currentValidItems.length} 条记录到Redis`);
+                                }
                             }
-                        })));
-                        throw error;  // 触发事务回滚
+                            
+                            return {
+                                inserted: batchInserted,
+                                queued: batchQueued
+                            };
+                        }, {
+                            // 增加事务超时时间，避免长时间事务超时
+                            timeout: 600000 // 10分钟超时
+                        });
+                        
+                        totalInserted += result.inserted;
+                        totalQueued += result.queued;
+                        transactionResults.push(result);
+                        
+                        const batchDuration = Date.now() - batchStart;
+                        logger.info(`NDSFiles - 第 ${i/transactionBatchSize + 1} 批数据处理完成，耗时 ${batchDuration}ms，插入 ${result.inserted} 条，入队 ${result.queued} 条`);
+                        
+                    } catch (error: any) {
+                        // 如果是数据库连接错误或事务超时，记录错误并继续处理下一批
+                        if (error.message && (error.message.includes("Can't reach database server") || 
+                                             error.message.includes("Transaction already closed"))) {
+                            logger.error(`批次 ${i/transactionBatchSize + 1} 处理出错:`, error);
+                            // 删除redis中的扫描记录，避免数据不一致
+                            try {
+                                await redis.batchScanDequeue(currentValidItems.map(item => ({
+                                    NDSID: item.ndsId,
+                                    data: {
+                                        file_path: item.file_path
+                                    }
+                                })));
+                            } catch (redisError) {
+                                logger.error('清理Redis扫描记录失败:', redisError);
+                            }
+                        } else {
+                            // 其他错误直接抛出
+                            throw error;
+                        }
                     }
                 }
-
-                return {
-                    total: result.count,
+                
+                // 汇总处理结果
+                const transactionResult = {
+                    total: totalInserted,
                     filtered: filteredItems.length,
                     original: itemsWithHash.length,
                     valid: validItems.length,
-                    queued: validItems.length
+                    queued: totalQueued
                 };
-            }).then(result => res.success(result));
+                
+                res.success(transactionResult);
+            } catch (error: any) {
+                // 如果是数据库连接错误，提供更详细的错误信息
+                if (error.message && error.message.includes("Can't reach database server")) {
+                    logger.error('数据库连接错误，请检查连接池配置或数据库服务状态:', error);
+                    res.internalError(`数据库连接错误，请稍后重试: ${error.message}`);
+                } else {
+                    logger.error('批量添加NDS文件任务出错:', error);
+                    res.internalError(`批量添加NDS文件任务出错: ${error.message}`);
+                }
+            }
 
         } catch (error: any) {
             logger.error('批量添加NDS文件任务出错:', error);
@@ -421,6 +500,11 @@ export class NDSFileController { // NDSFile任务控制类
         }
     }
 
+    // 定义单批处理的最大数量
+    private static readonly BATCH_PROCESS_SIZE = 500;
+    // 定义单次SQL操作的最大记录数（避免too many placeholders错误）
+    private static readonly MAX_SQL_BATCH_SIZE = 100;
+
     public static async processUnhandledTasks(_req?: Request, res?: Response): Promise<void> {
         /**
          * 处理未处理的任务
@@ -435,61 +519,109 @@ export class NDSFileController { // NDSFile任务控制类
                 return;
             }
 
-            // 使用联合查询直接获取符合条件的文件记录
-            const validFiles = await mysql.$queryRaw<NDSFileWithTask[]>`
-                SELECT DISTINCT nfl.*
-                FROM nds_file_list nfl
-                INNER JOIN enb_task_list etl
-                ON nfl.enodebid = etl.enodebid
-                AND nfl.data_type = etl.data_type
-                AND nfl.file_time >= etl.start_time
-                AND nfl.file_time <= etl.end_time
-                WHERE nfl.parsed = 0
-                AND etl.parsed = 0
-                AND etl.status = 0
-                LIMIT ${NDSFileController.BATCH_SIZE}
-            `;
+            let totalProcessed = 0;
+            let hasMoreRecords = true;
 
-            if (validFiles.length === 0) {
-                if (res) res.success('没有符合任务条件的文件');
-                return;
+            // 分批处理记录
+            while (hasMoreRecords) {
+                // 使用联合查询直接获取符合条件的文件记录，每次最多获取BATCH_PROCESS_SIZE条
+                const validFiles = await mysql.$queryRaw<NDSFileWithTask[]>`
+                    SELECT DISTINCT nfl.*
+                    FROM nds_file_list nfl
+                    INNER JOIN enb_task_list etl
+                    ON nfl.enodebid = etl.enodebid
+                    AND nfl.data_type = etl.data_type
+                    AND nfl.file_time >= etl.start_time
+                    AND nfl.file_time <= etl.end_time
+                    WHERE nfl.parsed = 0
+                    AND etl.parsed = 0
+                    AND etl.status = 0
+                    LIMIT ${NDSFileController.BATCH_PROCESS_SIZE}
+                `;
+
+                // 如果没有记录，退出循环
+                if (validFiles.length === 0) {
+                    hasMoreRecords = false;
+                    break;
+                }
+
+                try {
+                    // 使用事务确保数据一致性
+                    await mysql.$transaction(async (tx) => {
+                        // 分批更新文件状态为已处理，避免一次性生成过多的SQL占位符
+                        const fileHashes = validFiles.map(file => file.file_hash);
+                        const sqlBatchSize = NDSFileController.MAX_SQL_BATCH_SIZE;
+                        
+                        // 分批处理file_hash数组，每批最多处理sqlBatchSize条记录
+                        for (let i = 0; i < fileHashes.length; i += sqlBatchSize) {
+                            const batchHashes = fileHashes.slice(i, i + sqlBatchSize);
+                            await tx.ndsFileList.updateMany({
+                                where: {
+                                    file_hash: {
+                                        in: batchHashes
+                                    }
+                                },
+                                data: {
+                                    parsed: 1
+                                }
+                            });
+                            
+                            // 记录每批处理进度
+                            logger.debug(`NDSFiles - 已更新 ${i + batchHashes.length} / ${fileHashes.length} 条记录状态`);
+                        }
+
+                        // 分批添加到Redis队列，避免一次性处理过多数据
+                        const redisBatchSize = 500; // Redis批处理大小
+                        for (let i = 0; i < validFiles.length; i += redisBatchSize) {
+                            const batch = validFiles.slice(i, i + redisBatchSize);
+                            await redis.batchTaskEnqueue(batch.map(file => ({
+                                NDSID: file.ndsId,
+                                data: {
+                                    ndsId: file.ndsId,
+                                    file_path: file.file_path,
+                                    file_time: file.file_time.toISOString(),
+                                    data_type: file.data_type,
+                                    sub_file_name: file.sub_file_name,
+                                    header_offset: file.header_offset,
+                                    compress_size: file.compress_size,
+                                    file_size: file.file_size,
+                                    flag_bits: file.flag_bits,
+                                    enodebid: file.enodebid,
+                                    file_hash: file.file_hash
+                                }
+                            })));
+                            
+                            // 记录每批处理进度
+                            logger.debug(`NDSFiles - 已入队 ${i + batch.length} / ${validFiles.length} 条记录到Redis`);
+                        }
+                    }, {
+                        // 设置事务超时，避免长时间事务
+                        timeout: 600000 // 10分钟超时
+                    });
+                } catch (error) {
+                    logger.error('处理未处理任务事务出错:', error);
+                    // 如果是数据库连接错误，等待一段时间后继续
+                    if ((error as any).message && (error as any).message.includes("Can't reach database server")) {
+                        logger.warn('数据库连接错误，等待10秒后继续...');
+                        await new Promise(resolve => setTimeout(resolve, 10000));
+                    } else {
+                        throw error; // 其他错误直接抛出
+                    }
+                }
+
+                totalProcessed += validFiles.length;
+
+                // 如果获取的记录数小于批处理大小，说明没有更多记录了
+                if (validFiles.length < NDSFileController.BATCH_PROCESS_SIZE) {
+                    hasMoreRecords = false;
+                }
+
+                // 记录处理进度
+                logger.info(`NDSFiles - 已处理 ${totalProcessed} 条未处理任务`);
             }
 
-            // 使用事务确保数据一致性
-            await mysql.$transaction(async (tx) => {
-                // 更新文件状态为已处理
-                await tx.ndsFileList.updateMany({
-                    where: {
-                        file_hash: {
-                            in: validFiles.map(file => file.file_hash)
-                        }
-                    },
-                    data: {
-                        parsed: 1
-                    }
-                });
-
-                // 添加到Redis队列
-                await redis.batchTaskEnqueue(validFiles.map(file => ({
-                    NDSID: file.ndsId,
-                    data: {
-                        ndsId: file.ndsId,
-                        file_path: file.file_path,
-                        file_time: file.file_time.toISOString(),
-                        data_type: file.data_type,
-                        sub_file_name: file.sub_file_name,
-                        header_offset: file.header_offset,
-                        compress_size: file.compress_size,
-                        file_size: file.file_size,
-                        flag_bits: file.flag_bits,
-                        enodebid: file.enodebid,
-                        file_hash: file.file_hash
-                    }
-                })));
-            });
-
             if (res) res.success({
-                processed: validFiles.length
+                processed: totalProcessed
             });
 
         } catch (error: any) {
