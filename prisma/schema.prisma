@@ -108,7 +108,7 @@ model parserList {
 
 // ndsFile列表模型
 model ndsFileList {
-  file_hash     String   @id @db.VarChar(128)
+  file_hash     String   @db.VarChar(128)
   ndsId         Int      @db.Int
   file_path     String   @db.VarChar(250)
   file_time     DateTime @db.DateTime
@@ -123,12 +123,12 @@ model ndsFileList {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  @@unique([file_hash])
-  @@index([file_path])
+  @@id([file_hash, file_time])
+  @@index([file_hash])
+  @@index([file_time])
   @@index([data_type])
   @@index([enodebid])
   @@index([parsed])
-  @@index([file_time])
   @@index([ndsId, data_type, file_time, enodebid, parsed], name: "idx_nds_file_composite")
   @@map("nds_file_list")
 }

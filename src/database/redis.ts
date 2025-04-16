@@ -7,11 +7,11 @@ import Redis from 'ioredis';
 import { EventEmitter } from 'events';
 import logger from '../utils/logger';
 import { config } from '../utils/config';
-import { extractTimeFromPath } from '../utils/timeUtils';
+import { extractTimeFromPath } from '../utils/Utils';
 
 interface QueueItem {
     NDSID: string | number;
-    data: any;
+    data: string | object;
 }
 
 interface BatchResult {
@@ -19,12 +19,6 @@ interface BatchResult {
     failed: number;
 }
 
-interface HealthCheckResult {
-    status: 'healthy' | 'unhealthy';
-    connected: boolean;
-    reconnectAttempts: number;
-    error?: string;
-}
 
 interface MemoryInfo {
     used: number;      // 当前已使用的内存（字节）
@@ -41,7 +35,7 @@ class RedisManager extends EventEmitter {
     private isConnected = false;
     private reconnectAttempts = 0;
     private readonly maxReconnectAttempts = 20;
-    private scanListMaxTimes: Map<string, Date> = new Map();
+    public scanListMaxTimes: Map<string, Date> = new Map();
     constructor() {
         super();
         if (!RedisManager.instance) {
@@ -51,8 +45,8 @@ class RedisManager extends EventEmitter {
         return RedisManager.instance;
     }
 
-    private initialize(): void {
-        this.initRedis();
+    private initialize(): void { 
+        this.initRedis(); 
     }
 
     private initRedis(): void {
@@ -93,19 +87,11 @@ class RedisManager extends EventEmitter {
 
                 // 初始化扫描记录表的最大时间映射
                 await this.initScanListMaxTimes();
-
-                logger.info('Redis配置已设置:', {
-                    maxMemory: `${maxMemoryGB}GB`,
-                    policy: maxMemoryPolicy
-                });
-
+                logger.info('Redis配置已设置:', {maxMemory: `${maxMemoryGB}GB`, policy: maxMemoryPolicy});
                 // 获取并记录当前内存使用情况
                 const info = await this.redis.info('memory');
                 const used = parseInt(info.match(/used_memory:(\d+)/)?.[1] || '0');
-                logger.info('Redis当前内存使用:', {
-                    used: `${(used / 1024 / 1024 / 1024).toFixed(2)}GB`,
-                    maxMemory: `${maxMemoryGB}GB`
-                });
+                logger.info('Redis当前内存使用:', { used: `${(used / 1024 / 1024 / 1024).toFixed(2)}GB`, maxMemory: `${maxMemoryGB}GB` });
             } catch (error) {
                 logger.error('Redis内存配置设置失败:', error);
             }
@@ -140,32 +126,57 @@ class RedisManager extends EventEmitter {
         });
     }
 
-    /**
-     * 初始化扫描记录表的最大时间映射
-     */
+    //查询Redis内存使用情况
+    public async getMemoryInfo(): Promise<MemoryInfo> {
+        try {
+            await this.ensureConnection();
+            // 使用INFO命令获取内存信息
+            const info = await this.redis.info('memory');
+            // 解析INFO命令返回的字符串
+            const used = parseInt(info.match(/used_memory:(\d+)/)?.[1] || '0');
+            const peak = parseInt(info.match(/used_memory_peak:(\d+)/)?.[1] || '0');
+            const maxMemory = parseInt(info.match(/maxmemory:(\d+)/)?.[1] || '0');
+            // 计算使用率（保留2位小数）
+            const ratio = maxMemory > 0 ? Number((used / maxMemory * 100).toFixed(2)) : 0;
+            return {used, peak, maxMemory, ratio};
+        } catch (error) {
+            logger.error('获取Redis内存信息失败:', error);
+            throw error;
+        }
+    }
+
+    //初始化扫描记录表的最大时间映射
     private async initScanListMaxTimes(): Promise<void> {
         try {
             // 获取所有scan_for_nds:*的key
             const scanKeys = await this.redis.keys(`${this.SCAN_LIST_PREFIX}*`);
-
-            // 遍历每个scan_for_nds表
+            if (scanKeys.length === 0) return;
+            // 逐个处理每个集合，避免一次性加载所有数据
             for (const key of scanKeys) {
-                const paths = await this.redis.smembers(key);
-                let maxTime = new Date(0);
-
-                // 检查每个文件路径中的时间戳
-                for (const path of paths) {
-                    const fileTime = extractTimeFromPath(path);
-                    if (fileTime && fileTime > maxTime) {
-                        maxTime = fileTime;
-                    }
+                try {
+                    // 使用SSCAN命令分批获取集合成员，而不是一次性获取全部
+                    let cursor = '0';
+                    let maxTime = new Date(0);
+                    
+                    do {
+                        // 每次扫描获取一部分数据, 避免一次性加载大量数据
+                        const [nextCursor, paths] = await this.redis.sscan(key, cursor, 'COUNT', 1000);
+                        cursor = nextCursor;
+                        // 处理当前批次的路径
+                        for (const path of paths) {
+                            const fileTime = extractTimeFromPath(path);
+                            if (fileTime && fileTime > maxTime) maxTime = fileTime;
+                        }
+                    } while (cursor !== '0'); // 当cursor为0时表示扫描完成
+                    
+                    // 将最大时间存入映射
+                    this.scanListMaxTimes.set(key, maxTime);
+                } catch (err) {
+                    logger.error(`处理集合 ${key} 失败:`, err);
                 }
-
-                // 将最大时间存入映射
-                this.scanListMaxTimes.set(key, maxTime);
             }
 
-            logger.info('扫描记录表最大时间映射初始化完成');
+            logger.info(`扫描记录表最大时间映射初始化完成，共处理 ${scanKeys.length} 个集合`);
         } catch (error) {
             logger.error('初始化扫描记录表最大时间映射失败:', error);
         }
@@ -183,44 +194,29 @@ class RedisManager extends EventEmitter {
         }
     }
 
-    /**
-     * 获取任务队列的key
-     * @param ndsId NDSID（支持数字或字符串）
-     */
+    //获取任务队列的key task_for_nds:*
     private getTaskQueueKey(ndsId: string | number): string {
         return `${this.TASK_QUEUE_PREFIX}${ndsId.toString()}`;
     }
 
-    /**
-     * 获取扫描记录列表表名
-     * @param ndsId NDSID（支持数字或字符串）
-     */
+    //获取扫描记录列表表名 scan_for_nds:*
     private getScanListKey(ndsId: string | number): string {
         return  `${this.SCAN_LIST_PREFIX}${ndsId.toString()}`
     }
 
 
-    /**
-     * 更新扫描记录表的最大时间
-     * @param ndsId NDSID
-     * @param filePath 文件路径
-     */
+    //更新扫描记录表的最大时间
     private updateScanListMaxTime(ndsId: string | number, filePath: string): void {
         const fileTime = extractTimeFromPath(filePath);
         if (fileTime) {
             const scanQueueKey = this.getScanListKey(ndsId);
             const currentMaxTime = this.scanListMaxTimes.get(scanQueueKey) || new Date(0);
-            if (fileTime > currentMaxTime) {
-                this.scanListMaxTimes.set(scanQueueKey, fileTime);
-            }
+            if (fileTime > currentMaxTime) this.scanListMaxTimes.set(scanQueueKey, fileTime);
         }
     }
 
-    /**
-     * 批量插入已扫描文件清单
-     * @param items 要插入的数据项数组
-     */
-    public async batchScanEnqueue(items: QueueItem[]){
+    //批量插入已扫描文件清单
+    public async batchScanEnqueue(items: QueueItem[]): Promise<number[]> {
         try {
             await this.ensureConnection();
 
@@ -230,9 +226,7 @@ class RedisManager extends EventEmitter {
             // 按 NDSID 分组，确保转换为字符串
             items.forEach(item => {
                 const ndsId = item.NDSID.toString();
-                if (!ndsGroups[ndsId]) {
-                    ndsGroups[ndsId] = [];
-                }
+                if (!ndsGroups[ndsId]) ndsGroups[ndsId] = [];
                 ndsGroups[ndsId].push(item.data);
             });
 
@@ -240,17 +234,18 @@ class RedisManager extends EventEmitter {
             for (const [ndsId, dataList] of Object.entries(ndsGroups)) {
                 const scanQueueKey = this.getScanListKey(ndsId)
                 dataList.forEach(data => {
-                    pipeline.sadd(scanQueueKey, data.file_path); // 使用SADD添加扫描文件记录表
-                    this.updateScanListMaxTime(ndsId, data.file_path); // 更新最大时间映射
+                    if (typeof data !== 'string') data = data.file_path; // 将对象转换为字符串
+                    pipeline.sadd(scanQueueKey, data); // 使用SADD添加扫描文件记录表, 当记录已存在时不会重复添加
+                    this.updateScanListMaxTime(ndsId, data); // 更新最大时间映射
                 });
             }
 
             const results = await pipeline.exec();
-            if (!results) {
-                throw new Error('Pipeline execution failed');
-            }
-
-        }catch (error){
+            if (!results) throw new Error('Pipeline execution failed');
+            
+            // 返回每个操作的结果（1表示添加成功，0表示已存在）
+            return results.map(result => result[1] as number);
+        } catch (error) {
             logger.error('Redis批量入队失败:', error);
             throw error;
         }
@@ -258,11 +253,7 @@ class RedisManager extends EventEmitter {
 
 
 
-    /**
-     * 批量插入队列数据
-     * @param items 要插入的数据项数组
-     * @returns 成功和失败的数量
-     */
+    // 批量插入队列数据
     public async batchTaskEnqueue(items: QueueItem[]): Promise<BatchResult> {
         try {
             await this.ensureConnection();
@@ -273,9 +264,7 @@ class RedisManager extends EventEmitter {
             // 按 NDSID 分组，确保转换为字符串
             items.forEach(item => {
                 const ndsId = item.NDSID.toString();
-                if (!ndsGroups[ndsId]) {
-                    ndsGroups[ndsId] = [];
-                }
+                if (!ndsGroups[ndsId]) ndsGroups[ndsId] = [];
                 ndsGroups[ndsId].push(item.data);
             });
 
@@ -286,6 +275,7 @@ class RedisManager extends EventEmitter {
                 dataList.forEach(data => {
                     pipeline.rpush(taskQueueKey, JSON.stringify(data));  // 使用 RPUSH, 新数据插入尾部
                     pipeline.sadd(scanQueueKey, data.file_path); // 使用SADD添加扫描文件记录表
+                    this.updateScanListMaxTime(ndsId, data.file_path); // 更新最大时间映射
                 });
             }
 
@@ -305,141 +295,45 @@ class RedisManager extends EventEmitter {
     }
 
 
-
-    /**
-     * 获取指定任务队列的长度
-     * @param ndsId NDSID（支持数字或字符串）
-     * @returns 队列长度
-     */
-    public async getTaskQueueLength(ndsId: string | number): Promise<number> {
-        try {
-            await this.ensureConnection();
-            const queueKey = this.getTaskQueueKey(ndsId);
-            return await this.redis.llen(queueKey);
-        } catch (error) {
-            logger.error(`获取队列 NDS[${ndsId}] 长度失败:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * 健康检查
-     * @returns 健康检查结果
-     */
-    public async healthCheck(): Promise<HealthCheckResult> {
-        try {
-            await this.redis.ping();
-            logger.info('Redis健康检查通过');
-            return {
-                status: 'healthy',
-                connected: this.isConnected,
-                reconnectAttempts: this.reconnectAttempts
-            };
-        } catch (error) {
-            const err = error as Error;
-            logger.error('Redis健康检查失败:', err);
-            return {
-                status: 'unhealthy',
-                connected: this.isConnected,
-                reconnectAttempts: this.reconnectAttempts,
-                error: err.message
-            };
-        }
-    }
-
-    /**
-     * 查询Redis内存使用情况
-     * @returns Redis内存使用信息
-     */
-    public async getMemoryInfo(): Promise<MemoryInfo> {
-        try {
-            await this.ensureConnection();
-
-            // 使用INFO命令获取内存信息
-            const info = await this.redis.info('memory');
-
-            // 解析INFO命令返回的字符串
-            const used = parseInt(info.match(/used_memory:(\d+)/)?.[1] || '0');
-            const peak = parseInt(info.match(/used_memory_peak:(\d+)/)?.[1] || '0');
-            const maxMemory = parseInt(info.match(/maxmemory:(\d+)/)?.[1] || '0');
-
-            // 计算使用率（保留2位小数）
-            const ratio = maxMemory > 0
-                ? Number((used / maxMemory * 100).toFixed(2))
-                : 0;
-
-            logger.debug('Redis内存使用情况:', {
-                used: `${(used / 1024 / 1024 / 1024).toFixed(2)}GB`,     // 当前已使用内存
-                peak: `${(peak / 1024 / 1024 / 1024).toFixed(2)}GB`,     // 历史峰值内存（从启动到现在的最高值）
-                maxMemory: maxMemory > 0 ? `${(maxMemory / 1024 / 1024 / 1024).toFixed(2)}GB` : '未限制',  // 最大可用内存
-                ratio: `${ratio}%`  // 当前使用率
-            });
-
-            return {
-                used,
-                peak,
-                maxMemory,
-                ratio
-            };
-        } catch (error) {
-            logger.error('获取Redis内存信息失败:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * 筛选不在扫描记录集合中的文件路径
-     * @param ndsId NDSID（支持数字或字符串）
-     * @param filePaths 要检查的文件路径数组
-     * @returns 不存在于集合中的文件路径数组
-     */
+    // 筛选不在扫描记录集合中的文件路径
     public async filterNonExistingPaths(ndsId: string | number, filePaths: string[]): Promise<string[]> {
         try {
-            if (!filePaths || filePaths.length === 0) {
-                return [];
+            if (!filePaths || filePaths.length === 0) return [];
+            await this.ensureConnection(); // 检查连接状态
+
+            const scanQueueKey = this.getScanListKey(ndsId); // scan_for_nds:*
+            
+            try {
+                // 使用SMISMEMBER一次性检查多个成员是否存在(版本要求Redis 6.2.0及以上)
+                const existsArray = await this.redis.smismember(scanQueueKey, filePaths);
+                // 直接过滤出不存在的路径
+                const nonExistingPaths = filePaths.filter((_, index) => existsArray[index] === 0);
+                return nonExistingPaths;
+            } catch (err) {
+                // 如果SMISMEMBER不支持，回退到pipeline方式
+                const pipeline = this.redis.pipeline();
+                filePaths.forEach(path => pipeline.sismember(scanQueueKey, path));
+                const results = await pipeline.exec();
+                if (!results) throw new Error('Pipeline execution failed');
+                const nonExistingPaths: string[] = [];
+                results.forEach((result, index) => {
+                    const [err, exists] = result;
+                    if (!err && exists === 0) nonExistingPaths.push(filePaths[index]);
+                });
+                return nonExistingPaths;
+
             }
-
-            await this.ensureConnection();
-            const scanQueueKey = this.getScanListKey(ndsId);
-            const pipeline = this.redis.pipeline();
-            const nonExistingPaths: string[] = [];
-
-            // 使用pipeline批量检查每个路径是否存在于集合中
-            filePaths.forEach(path => {
-                pipeline.sismember(scanQueueKey, path);
-            });
-
-            const results = await pipeline.exec();
-            if (!results) {
-                throw new Error('Pipeline execution failed');
-            }
-
-            // 处理结果，找出不存在的路径
-            results.forEach((result, index) => {
-                const [err, exists] = result;
-                if (err) {
-                    logger.warn(`检查路径 ${filePaths[index]} 时出错:`, err);
-                } else if (exists === 0) { // 0表示不存在于集合中
-                    nonExistingPaths.push(filePaths[index]);
-                }
-            });
-
-            logger.debug(`筛选完成: 共检查${filePaths.length}个路径，发现${nonExistingPaths.length}个不存在的路径`);
-            return nonExistingPaths;
         } catch (error) {
             logger.error(`筛选不存在的文件路径失败 [NDS:${ndsId}]:`, error);
             throw error;
         }
     }
 
-    /**
-     * 批量删除已扫描文件清单
-     * @param items 要删除的数据项数组
-     */
+
+    //批量删除扫描文件记录
     public async batchScanDequeue(items: QueueItem[]): Promise<void> {
         try {
             await this.ensureConnection();
-
             const pipeline = this.redis.pipeline();
             const ndsGroups: { [key: string]: any[] } = {};
 
@@ -455,16 +349,11 @@ class RedisManager extends EventEmitter {
             // 批量删除每个队列中的记录
             for (const [ndsId, dataList] of Object.entries(ndsGroups)) {
                 const scanQueueKey = this.getScanListKey(ndsId);
-                dataList.forEach(data => {
-                    pipeline.srem(scanQueueKey, data.file_path); // 使用SREM移除扫描文件记录
-                });
+                dataList.forEach(data => pipeline.srem(scanQueueKey, data.file_path)); // 使用SREM移除扫描文件记录
             }
-
             const results = await pipeline.exec();
-            if (!results) {
-                throw new Error('Pipeline execution failed');
-            }
-
+            if (!results) throw new Error('Pipeline execution failed');
+            
         } catch (error) {
             logger.error('Redis批量删除失败:', error);
             throw error;
@@ -472,58 +361,60 @@ class RedisManager extends EventEmitter {
     }
 
 
+    // 批量删除过期扫描记录
     public async cleanExpiredScanRecords(max_age_days: number = 45): Promise<{ cleaned: number, total: number }> {
         try {
             await this.ensureConnection();
-            const pipeline = this.redis.pipeline();
             let totalRecords = 0;
             let cleanedRecords = 0;
 
             // 获取所有scan_for_nds:*的key
             const scanKeys = await this.redis.keys(`${this.SCAN_LIST_PREFIX}*`);
+            if (scanKeys.length === 0) return { cleaned: 0, total: 0 };
 
-            // 遍历每个scan_for_nds表
+            // 逐个处理每个集合
             for (const key of scanKeys) {
-                // 获取集合中的所有文件路径
-                const paths = await this.redis.smembers(key);
-                totalRecords += paths.length;
-
-                // 获取该表的最大时间
-                const maxTime = this.scanListMaxTimes.get(key) || new Date(0);
-
-                // 检查每个文件路径
-                for (const path of paths) {
-                    const fileTime = extractTimeFromPath(path);
-                    let shouldDelete = false;
-
-                    if (!fileTime) {
-                        // 如果无法提取时间，删除该记录
-                        shouldDelete = true;
-                    } else {
-
-                        // 计算文件时间与最大时间的差值（天数）
-                        const daysDiff = (maxTime.getTime() - fileTime.getTime()) / (1000 * 60 * 60 * 24);
-                        if (daysDiff > max_age_days) {
-                            shouldDelete = true;
+                try {
+                    // 使用SSCAN命令分批获取集合成员
+                    let cursor = '0';
+                    let keyTotalRecords = 0;
+                    let keyCleanedRecords = 0;
+                    const maxTime = this.scanListMaxTimes.get(key) || new Date(0);
+                    do {
+                        // 每次扫描获取一部分数据
+                        const [nextCursor, paths] = await this.redis.sscan(key, cursor, 'COUNT', 1000);
+                        cursor = nextCursor;
+                        
+                        // 处理当前批次的路径
+                        const pathsToDelete: string[] = [];
+                        for (const path of paths) {
+                            keyTotalRecords++;
+                            const fileTime = extractTimeFromPath(path);
+                            // 如果无法提取时间或时间差超过阈值，则删除
+                            if (!fileTime || (maxTime.getTime() - fileTime.getTime()) / (1000 * 60 * 60 * 24) > max_age_days) {
+                                pathsToDelete.push(path);
+                                keyCleanedRecords++;
+                            }
                         }
-                    }
-
-                    if (shouldDelete) {
-                        pipeline.srem(key, path);
-                        cleanedRecords++;
-                    }
+                        
+                        // 如果有需要删除的记录，执行删除操作
+                        if (pathsToDelete.length > 0)  await this.redis.srem(key, ...pathsToDelete);
+                        
+                    } while (cursor !== '0'); // 当cursor为0时表示扫描完成
+                    
+                    // 更新总计数
+                    totalRecords += keyTotalRecords;
+                    cleanedRecords += keyCleanedRecords;
+                    
+                    logger.info(`清理集合 ${key} 完成: 共检查${keyTotalRecords}条记录，清理${keyCleanedRecords}条过期记录`);
+                    
+                } catch (err) {
+                    logger.error(`处理集合 ${key} 失败:`, err);
                 }
-            }
-
-            // 执行批量删除操作
-            const results = await pipeline.exec();
-            if (!results) {
-                throw new Error('Pipeline execution failed');
             }
 
             logger.info(`清理过期扫描记录完成: 共检查${totalRecords}条记录，清理${cleanedRecords}条过期记录`);
             return { cleaned: cleanedRecords, total: totalRecords };
-
         } catch (error) {
             logger.error('清理过期扫描记录失败:', error);
             throw error;

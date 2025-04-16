@@ -15,5 +15,7 @@ router.post("/filter", NDSFileController.filterFiles);
 
 router.post("/batchAddTasks", NDSFileController.batchAddTasks);
 
+// 更新任务状态
+router.post("/updateTaskStatus", NDSFileController.updateTaskStatus);
 
 export default router;

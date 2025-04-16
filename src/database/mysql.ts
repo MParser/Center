@@ -35,27 +35,15 @@ const mysql = new PrismaClient({
         }
     },
     log: [ // 定义日志级别
-        {
-            emit: 'event',
-            level: 'query',
-        },
-        {
-            emit: 'event',
-            level: 'error',
-        },
-        {
-            emit: 'event',
-            level: 'info',
-        },
-        {
-            emit: 'event',
-            level: 'warn',
-        },
+        { emit: 'event', level: 'query' },
+        { emit: 'event', level: 'error' },
+        { emit: 'event', level: 'info' },
+        { emit: 'event', level: 'warn' },
     ],
-    // 设置事务超时时间为30分钟
+    // 设置事务超时时间为20分钟
     transactionOptions: {
-        timeout: 1800000,
-        maxWait: 1800000,
+        timeout: 1200000,
+        maxWait: 600000,
     }
 });
 

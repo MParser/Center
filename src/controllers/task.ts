@@ -28,8 +28,6 @@ export class TaskController {
             logger.error('任务映射初始化失败:', error);
         });
 
-        // // 启动任务检查器
-        // taskChecker.start();
     }
 
     /**
@@ -203,11 +201,11 @@ export class TaskController {
             }
 
             // 使用内存映射检查
-            const hasTask = enbTaskMap.hasTaskInTimeRange(enodebid, checkTime);
+            const hasTask = await enbTaskMap.hasTaskInTimeRange(enodebid, checkTime);
 
             if (hasTask) {
                 // 如果有任务，获取具体任务信息
-                const taskInfo = enbTaskMap.getTask(enodebid);
+                const taskInfo = await enbTaskMap.getTask(enodebid);
                 res.success({
                     hasTask: true,
                     taskInfo: {

@@ -1,6 +1,8 @@
 /**
- * 时间工具类
+ * 工具类
  */
+
+import crypto from 'crypto';
 
 /**
  * 从文件路径中提取时间信息
@@ -21,4 +23,16 @@ export function extractTimeFromPath(filePath: string): Date | null {
         parseInt(timeStr.substring(10, 12)),  // 分钟
         parseInt(timeStr.substring(12, 14))   // 秒数
     );
+}
+
+/**
+ * 生成文件哈希值
+ * @param ndsId NDSID
+ * @param file_path 文件路径
+ * @param sub_file_name 子文件名
+ * @returns 生成的哈希值
+ */
+export function generateFileHash(ndsId: number, file_path: string, sub_file_name: string): string {
+    const data = `${ndsId}${file_path}${sub_file_name}`;
+    return crypto.createHash('md5').update(data).digest('hex');
 }

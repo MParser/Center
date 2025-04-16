@@ -53,6 +53,7 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, swaggerOptions));
 
 // 自动加载路由
 const routesDir = path.join(__dirname, 'routes');
+logger.info(`扫描路由目录完成`);
 fs.readdirSync(routesDir).forEach(async (file) => {
     // 开发环境加载.ts文件，生产环境加载.js文件
     if (file.endsWith('.d.ts')) {
@@ -62,6 +63,7 @@ fs.readdirSync(routesDir).forEach(async (file) => {
 
     try {
     // 动态导入路由模块
+    
     const routeModule = await import(path.join(routesDir, file));
     const router = routeModule.default;
 
