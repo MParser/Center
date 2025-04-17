@@ -4,7 +4,7 @@
 import { Request, Response } from 'express';
 import mysql from '../database/mysql';
 import logger from '../utils/logger';
-import enbTaskMap from '../utils/enbTaskMap';
+import { enbTaskListMap } from '../utils/tableMap';
 
 /**
  * 任务创建数据类型
@@ -22,7 +22,7 @@ export class TaskController {
     // 静态初始化代码
     static {
         // 初始化任务映射
-        enbTaskMap.refresh().then(() => {
+        enbTaskListMap.refresh().then(() => {
             logger.info('任务映射初始化完成');
         }).catch(error => {
             logger.error('任务映射初始化失败:', error);
@@ -141,7 +141,7 @@ export class TaskController {
             });
 
             // 刷新内存映射
-            await enbTaskMap.refresh();
+            await enbTaskListMap.refresh();
 
             res.success(result, '创建任务成功');
         } catch (error: any) {
@@ -171,7 +171,7 @@ export class TaskController {
             });
 
             // 刷新内存映射
-            await enbTaskMap.refresh();
+            await enbTaskListMap.refresh();
 
             res.success(null, '删除任务成功');
         } catch (error: any) {
@@ -201,18 +201,23 @@ export class TaskController {
             }
 
             // 使用内存映射检查
-            const hasTask = await enbTaskMap.hasTaskInTimeRange(enodebid, checkTime);
-
-            if (hasTask) {
-                // 如果有任务，获取具体任务信息
-                const taskInfo = await enbTaskMap.getTask(enodebid);
+            const tasks = await enbTaskListMap.getTaskMap();
+            
+            // 查找指定基站在指定时间范围内的任务
+            const taskInfo = tasks.find(task => 
+                task.enodebid === enodebid && 
+                checkTime.getTime() >= task.start_time.getTime() && 
+                checkTime.getTime() <= task.end_time.getTime()
+            );
+            
+            if (taskInfo) {
                 res.success({
                     hasTask: true,
                     taskInfo: {
-                        enodebid: taskInfo?.enodebid,
-                        start_time: taskInfo?.start_time,
-                        end_time: taskInfo?.end_time,
-                        trigger_check: taskInfo?.trigger_check
+                        enodebid: taskInfo.enodebid,
+                        start_time: taskInfo.start_time,
+                        end_time: taskInfo.end_time,
+                        trigger_check: taskInfo.trigger_check
                     }
                 }, '在指定时间范围内存在任务');
             } else {
