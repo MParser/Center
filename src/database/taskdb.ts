@@ -41,7 +41,8 @@ class PartitionManager {
      */
     public convertTimeToPartition(time: Date): Partition {
         try {
-           // 将传入时间+1天
+
+            // 将传入时间+1天
             const newTime = new Date(time);
             newTime.setDate(newTime.getDate() + 1);  // 正确的日期加1天方法
             
@@ -70,7 +71,7 @@ class PartitionManager {
                 const partitions = await mysql.$queryRaw<PartitionInfo[]>`SELECT PARTITION_NAME FROM information_schema.PARTITIONS WHERE table_name = 'nds_file_list' ORDER BY PARTITION_NAME ASC;`;
                 partitions.forEach(partition => { 
                     const partitionName = partition.PARTITION_NAME;
-                    if (partitionName.startsWith('p_') && partitionName.length === 10) {
+                    if (typeof partitionName === 'string' && partitionName.startsWith('p_') && partitionName.length === 10) {
                         const dateStr = partitionName.substring(2); // 去掉p_前缀
                         // 转换为YYYY-MM-DD格式的日期
                         const year = dateStr.substring(0, 4);
@@ -117,6 +118,7 @@ class PartitionManager {
                 const createPartitionSql = `ALTER TABLE nds_file_list PARTITION BY RANGE (TO_DAYS(file_time)) (PARTITION ${partition.name} VALUES LESS THAN (TO_DAYS('${partition.p_date}')));`;
                 await mysql.$executeRawUnsafe(createPartitionSql);
                 logger.info('添加分区:'+ partition.name);
+                this.partitions.set(partition.name, partition.date)
                 return ;
             }
             // 查找所有分区中的最大日期值
@@ -124,21 +126,24 @@ class PartitionManager {
             for (const [_, date] of this.partitions.entries()) { if (date.getTime() > findDate.getTime()) findDate = date; }
             const isGreaterThanMaxDate = partition.date.getTime() > findDate.getTime(); // 判断传入日期是否大于最大日期
             if (isGreaterThanMaxDate) { // 大于最大日期, 使用ADD方法往后顺延分区序列
-                // 如果开始时间比file_time时间小45天以上, 则maxDate = file_time - 45天
-                const startDate = findDate.getTime() < partition.date.getTime() - 3888000000 ? findDate : new Date(partition.date.getTime() - 3888000000);
                 const dates: Date[] = [];
-                let currentDate = new Date(startDate);
-                currentDate.setDate(currentDate.getDate() + 1); // 从最大日期的下一天开始
+                let currentDate = findDate;
                 while (currentDate.getTime() <= partition.date.getTime()) {
                     dates.push(new Date(currentDate));
                     currentDate.setDate(currentDate.getDate() + 1);
                 }
                 for (const date of dates) {
-                    const partition = this.convertTimeToPartition(date);
-                    const addPartitionSql = `ALTER TABLE nds_file_list ADD PARTITION (PARTITION ${partition.name} VALUES LESS THAN (TO_DAYS('${partition.p_date}')));`;
-                    await mysql.$executeRawUnsafe(addPartitionSql); 
-                    this.partitions.set(partition.name, partition.date);
-                    logger.info('添加分区:'+ partition.name);
+                    try {
+                        const partition = this.convertTimeToPartition(date);
+                        const addPartitionSql = `ALTER TABLE nds_file_list ADD PARTITION (PARTITION ${partition.name} VALUES LESS THAN (TO_DAYS('${partition.p_date}')));`;
+                        if (this.partitions.has(partition.name)) continue;
+                        await mysql.$executeRawUnsafe(addPartitionSql); 
+                        this.partitions.set(partition.name, partition.date);
+                        logger.info('添加分区:['+ partition.name + '] - Date: ('+ partition.p_date + ')成功');
+                    }catch(err) {
+                        logger.warn(`ALTER TABLE nds_file_list ADD PARTITION (PARTITION ${partition.name} VALUES LESS THAN (TO_DAYS('${partition.p_date}')));`)
+                        logger.warn('添加分区:['+ partition.name + '] - Date: ('+ partition.p_date + ')失败; ' + err);
+                    }
                 }
             } else { // 小于最大日期, 使用重构结构的方式进行插入
                 // 获取最小日期
@@ -175,8 +180,9 @@ class PartitionManager {
             const sortedPartitions = new Map([...partitions.entries()].sort((a, b) => a[1].getTime() - b[1].getTime()));
             this.partitions = sortedPartitions;
         } catch (error) {
-            logger.error('添加分区失败:'+ error); 
+            logger.error(`添加分区[${partition.name} - ${partition.p_date}]失败:`+ error); 
         } finally {
+
             release();
         }
     }
@@ -407,13 +413,13 @@ export class TaskManager {
                     const queueResult = await redis.batchTaskEnqueue(queueItems);
                     result.queued += queueResult?.success || 0;
                     
-                    logger.info(`成功插入${insertResult.count}条数据，队列添加${queueResult?.success || 0}条`);
+                    logger.info(`数据库插入${insertResult.count}条数据，队列添加${queueResult?.success || 0}条(batch: ${batch?.length || 0})`);
                 } catch (error) {
                     logger.error('TaskManager addTask error on insert database:'+ error); 
                 }
             }
             
-            logger.info(`任务处理统计: 总数=${result.total}, 过滤后=${result.filtered}, 原始=${result.original}, 有效=${result.valid}, 入队=${result.queued}`);
+            logger.info(`任务处理完成: 总数=${dbModelItems.length}, 过滤后=${result.filtered}, 入队=${result.queued}`);
         } catch (error) {
             logger.error('TaskManager addTask error:'+ error);
         }
@@ -428,12 +434,12 @@ export class TaskManager {
                 file_time = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
                 const partition = this.pm.convertTimeToPartition(file_time)
                 if (partition.name === '' || !this.pm.partitions.has(partition.name)) {
-                    await mysql.ndsFileList.update({ where: { file_hash: hash }, data: { parsed: parsed } });
+                    await mysql.ndsFileList.update({ where: { file_hash_file_time: { file_hash: hash, file_time: file_time }}, data: { parsed: parsed }});
                 }else {
                     await mysql.$executeRaw`UPDATE nds_file_list PARTITION (${partition.name}) SET parsed = ${parsed} WHERE file_hash = '${hash}';`;
                 }
             }else {
-                await mysql.ndsFileList.update({ where: { file_hash: hash }, data: { parsed: parsed } });
+                await mysql.ndsFileList.updateMany({ where: { file_hash: hash }, data: { parsed: parsed } });
             }
             
             return true;
