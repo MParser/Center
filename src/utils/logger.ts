@@ -74,7 +74,17 @@ const formatArg = (arg: unknown): string => {
  * @returns {string} 格式化后的日志
  */
 const formatLog = (level: LogLevelStrings, args: unknown[]): string => {
-  const timestamp = new Date().toISOString();
+  // 使用本地时区获取时间戳
+  const timestamp = new Date().toLocaleString('zh-CN', { 
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).replace(/[\u4e00-\u9fa5]/g, '').replace(/[\/]/g, '-').replace(/,/g, '');
   const message = args.map(formatArg).join(' ');
   return `[${timestamp}] [${level.toUpperCase()}] ${message}`;
 };

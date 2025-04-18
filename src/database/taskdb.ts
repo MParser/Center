@@ -288,10 +288,9 @@ interface NDSFileWithTask {
 
 interface AddTaskResult {
     total: number;       // 成功插入数据库的总数
-    filtered: number;    // 经过eNodeB过滤后的数量
     original: number;    // 原始任务数量
-    valid: number;       // 有效任务数量(parsed=1)
     queued: number;      // 已入队的任务数量
+    duration: number;    // 总耗时（秒）
 }
 
 export class TaskManager {
@@ -338,33 +337,19 @@ export class TaskManager {
         const startTime = Date.now(); // 记录总耗时开始时间
         const result: AddTaskResult = {
             total: 0,          // 成功插入数据库的总数
-            filtered: 0,       // 经过eNodeB过滤后的数量
             original: tasks.length, // 原始任务数量
-            valid: 0,          // 有效任务数量(parsed=1)
             queued: 0,         // 已入队的任务数量
+            duration: 0,       // 总耗时（秒）
         };
         
         try {
-            // 获取所有NDSID和file_path并去重, 整合为数组, 然后调用redis.batchScanEnqueue();方法记录到redis中
-            const items = tasks.map(task => ({NDSID: task.ndsId, data: task.file_path}));
-            const seen = new Set();
-            const uniqueItems = [];
-            for (const item of items) {
-                const key = `${item.NDSID}-${item.data}`;
-                if (seen.has(key)) continue;
-                seen.add(key);
-                uniqueItems.push(item);
-            }
-            seen.clear(); // 清空seen
-            const scanResults = await redis.batchScanEnqueue(uniqueItems);
-            // 计算成功添加的记录数（值为1表示新添加，0表示已存在）
-            result.queued += scanResults ? scanResults.filter(res => res === 1).length : 0;
-            
             const enb_list = await this.cellDataENB.getENBMap();
-            const filteredTasks = tasks.filter(task => enb_list.includes(parseInt(task.enodebid))); // 判断tasks中的enodebid是否在enb_list中
-            result.filtered = filteredTasks.length;
+            const filteredTasks = tasks.filter(task => enb_list.includes(parseInt(task.enodebid))); // 判断tasks中的enodebid是否在CellData中
             
-            if (filteredTasks.length === 0) return result;
+            if (filteredTasks.length === 0) {
+                result.duration = Number(((Date.now() - startTime) / 1000).toFixed(2));
+                return result;
+            }
 
             const enb_task = await enbTaskListMap.getTaskMap();
 
@@ -377,7 +362,6 @@ export class TaskManager {
                     task.end_time.getTime() >= item.file_time.getTime()
                 );
                 
-                if (isValidForTask) result.valid++;
                 return { ...item, file_hash: generateFileHash(item.ndsId, item.file_path, item.sub_file_name), parsed: isValidForTask ? 1 : 0 };
             });
 
@@ -390,9 +374,7 @@ export class TaskManager {
             const p_times = await this.pm.getPartitionMap();
             // 遍历uniqueFileTimes, 如果不在p_times中, 则调用PartitionManager.addPartition()方法添加分区
             for (const file_time of uniqueFileTimes) {
-                if (!p_times.has(this.pm.convertTimeToPartition(file_time).name)) {
-                    await this.pm.addPartition(file_time);
-                }
+                if (!p_times.has(this.pm.convertTimeToPartition(file_time).name)) { await this.pm.addPartition(file_time); }
             }
             
             // 过滤掉非数据库模型字段，只保留与ndsFileList模型匹配的字段
@@ -444,18 +426,17 @@ export class TaskManager {
                     const queueResult = await redis.batchTaskEnqueue(queueItems);
                     result.queued += queueResult?.success || 0;
                     
-                    const batchEndTime = Date.now();
-                    const batchDuration = batchEndTime - batchStartTime;
-                    logger.info(`数据库插入${insertResult.count}条数据，队列添加${queueResult?.success || 0}条(batch: ${batch?.length || 0})，耗时: ${batchDuration}ms`);
+                    const batchDuration = Number(((Date.now() - batchStartTime) / 1000).toFixed(2));
+                    logger.info(`批次处理: ${i/batchSize+1}/${Math.ceil(dbModelItems.length/batchSize)}, 数据库: ${insertResult.count}条, Redis: ${queueResult?.success || 0}条, 耗时: ${batchDuration}秒`);
                 } catch (error) {
                     logger.error('TaskManager addTask error on insert database:'+ error); 
                 }
             }
             
-            const endTime = Date.now();
-            const totalDuration = endTime - startTime;
-            logger.info(`任务处理完成: 总数=${dbModelItems.length}, 过滤后=${result.filtered}, 入队=${result.queued}, 总耗时: ${totalDuration}ms`);
+            result.duration = Number(((Date.now() - startTime) / 1000).toFixed(2));
+            logger.info(`任务处理完成: 传入=${result.original}, 数据库=${result.total}, Redis=${result.queued}, 总耗时: ${result.duration}秒`);
         } catch (error) {
+            result.duration = Number(((Date.now() - startTime) / 1000).toFixed(2));
             logger.error('TaskManager addTask error:'+ error);
         }
         
