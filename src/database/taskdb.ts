@@ -353,8 +353,8 @@ export class TaskManager {
 
             // 提取所有file_time,转为Date(只保留年月日)并去重, 然后调用PartitionManager.addPartition()方法添加分区
             const file_times = itemsWithHash.map(item => {
-                const d = new Date(item.file_time);
-                return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+                const d = `${item.file_time.getFullYear()}-${item.file_time.getMonth()+1}-${item.file_time.getDate()}`;
+                return new Date(d);
             });
             const uniqueFileTimes = [...new Set(file_times)];
             const p_times = await this.pm.getPartitionMap();
@@ -427,12 +427,10 @@ export class TaskManager {
         return result;
     }
 
-    public async updateTask(hash: string, file_time: Date | string, parsed: number): Promise<Boolean> {
+    public async updateTask(hash: string, file_time: Date, parsed: number): Promise<Boolean> {
         try {
             if (file_time) {
-                const d = typeof file_time === 'string' ? new Date(file_time) : file_time;
-                file_time = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-                const partition = this.pm.convertTimeToPartition(file_time)
+                const partition = this.pm.convertTimeToPartition(file_time);
                 if (partition.name === '' || !this.pm.partitions.has(partition.name)) {
                     await mysql.ndsFileList.update({ where: { file_hash_file_time: { file_hash: hash, file_time: file_time }}, data: { parsed: parsed }});
                 }else {
