@@ -88,7 +88,7 @@ mysql.$on('error', (e: { message: unknown; }) => {
 });
 
 mysql.$on('info', (e: { message: unknown; }) => {
-    logger.info('Database info:', e.message);
+    logger.info('MySQL 配置:', e.message);
 });
 
 mysql.$on('warn', (e: { message: unknown; }) => {

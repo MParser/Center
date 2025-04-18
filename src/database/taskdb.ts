@@ -225,6 +225,34 @@ class PartitionManager {
         }
     }
 
+    /**
+     * 重建扫描记录
+     */
+    public async rebuildScanRecords(): Promise<void> {
+        try {
+           //按照现有partition循环处理
+            const partitionMap = await this.getPartitionMap();
+            if (partitionMap.size === 0) return;
+            const partitions = [...partitionMap.entries()].sort((a, b) => a[1].getTime() - b[1].getTime()); // 日期从小到大排序
+            for (const [_, p_date] of partitions) {
+                const partition = this.convertTimeToPartition(p_date);
+                try {
+                    const data = await mysql.$queryRawUnsafe<{ndsId: number, file_path: string}[]>(`SELECT DISTINCT ndsId, file_path FROM nds_file_list PARTITION(${partition.name})`);
+                    await redis.batchScanEnqueue(data.map(item => ({
+                        NDSID: item.ndsId !== undefined ? item.ndsId.toString() : '',
+                        data: item.file_path !== undefined ? item.file_path.toString() : ''
+                    })).filter(item => item.NDSID && item.data));
+                    logger.info(`成功建立分区扫描记录: ${partition.name}, 扫描数量: ${data.length}`); 
+                }catch (error) {
+                    logger.error(`建立分区扫描记录失败: ${partition.name};` + `SELECT DISTINCT ndsId, file_path FROM nds_file_list PARTITION(${partition.name});`);
+                    logger.error(error);
+                }
+            } 
+        } catch (error) {
+            logger.error('重建扫描记录失败:'+ error);
+        }
+    }
+
 }
 
 
@@ -291,6 +319,7 @@ export class TaskManager {
             await this.pm.initPartitionMap();
             await this.pm.cleanExpiredPartitions(); // 清理过期分区
             await this.cleanExpiredScanRecords(); // 清理过期扫描记录
+            await this.pm.rebuildScanRecords(); // 重建扫描记录
             // 定时清理过期分区
             setInterval(async () => {
                 logger.info('定时清理过期数据...');
@@ -306,6 +335,7 @@ export class TaskManager {
     }
 
     public async addTask(tasks: NDSFileItem[]): Promise<AddTaskResult> {
+        const startTime = Date.now(); // 记录总耗时开始时间
         const result: AddTaskResult = {
             total: 0,          // 成功插入数据库的总数
             filtered: 0,       // 经过eNodeB过滤后的数量
@@ -384,6 +414,7 @@ export class TaskManager {
             // 批量插入数据, 分批插入, 每次插入1000条, 如果有重复的, 则跳过
             const batchSize = 1000;
             for (let i = 0; i < dbModelItems.length; i += batchSize) {
+                const batchStartTime = Date.now(); // 记录分批处理开始时间
                 const batch = dbModelItems.slice(i, i + batchSize);
                 try {
                     const insertResult = await mysql.$transaction(async (tx) => {
@@ -392,8 +423,8 @@ export class TaskManager {
                     
                     result.total += insertResult.count;
                     
-                    // 批量插入redis
-                    const queueItems = batch.map(item => ({
+                    // 批量插入redis（筛选parsed=1的）
+                    const queueItems = batch.filter(item => item.parsed === 1).map(item => ({
                         NDSID: item.ndsId,
                         data: {
                             ndsId: item.ndsId,
@@ -413,13 +444,17 @@ export class TaskManager {
                     const queueResult = await redis.batchTaskEnqueue(queueItems);
                     result.queued += queueResult?.success || 0;
                     
-                    logger.info(`数据库插入${insertResult.count}条数据，队列添加${queueResult?.success || 0}条(batch: ${batch?.length || 0})`);
+                    const batchEndTime = Date.now();
+                    const batchDuration = batchEndTime - batchStartTime;
+                    logger.info(`数据库插入${insertResult.count}条数据，队列添加${queueResult?.success || 0}条(batch: ${batch?.length || 0})，耗时: ${batchDuration}ms`);
                 } catch (error) {
                     logger.error('TaskManager addTask error on insert database:'+ error); 
                 }
             }
             
-            logger.info(`任务处理完成: 总数=${dbModelItems.length}, 过滤后=${result.filtered}, 入队=${result.queued}`);
+            const endTime = Date.now();
+            const totalDuration = endTime - startTime;
+            logger.info(`任务处理完成: 总数=${dbModelItems.length}, 过滤后=${result.filtered}, 入队=${result.queued}, 总耗时: ${totalDuration}ms`);
         } catch (error) {
             logger.error('TaskManager addTask error:'+ error);
         }
@@ -427,6 +462,14 @@ export class TaskManager {
         return result;
     }
 
+    
+    /**
+     * 更新任务状态
+     * @param hash 文件hash
+     * @param file_time 文件时间
+     * @param parsed 解析状态
+     * @returns 
+     */
     public async updateTask(hash: string, file_time: Date, parsed: number): Promise<Boolean> {
         try {
             if (file_time) {
@@ -434,7 +477,7 @@ export class TaskManager {
                 if (partition.name === '' || !this.pm.partitions.has(partition.name)) {
                     await mysql.ndsFileList.update({ where: { file_hash_file_time: { file_hash: hash, file_time: file_time }}, data: { parsed: parsed }});
                 }else {
-                    await mysql.$executeRaw`UPDATE nds_file_list PARTITION (${partition.name}) SET parsed = ${parsed} WHERE file_hash = '${hash}';`;
+                    await mysql.$executeRawUnsafe(`UPDATE nds_file_list PARTITION (${partition.name}) SET parsed = ${parsed} WHERE file_hash = '${hash}';`);
                 }
             }else {
                 await mysql.ndsFileList.updateMany({ where: { file_hash: hash }, data: { parsed: parsed } });

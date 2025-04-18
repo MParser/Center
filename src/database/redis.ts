@@ -87,11 +87,11 @@ class RedisManager extends EventEmitter {
 
                 // 初始化扫描记录表的最大时间映射
                 await this.initScanListMaxTimes();
-                logger.info('Redis配置已设置:', {maxMemory: `${maxMemoryGB}GB`, policy: maxMemoryPolicy});
+                logger.info(`Redis配置: 最大内存: ${maxMemoryGB}GB, 淘汰策略: ${maxMemoryPolicy}`)
                 // 获取并记录当前内存使用情况
                 const info = await this.redis.info('memory');
                 const used = parseInt(info.match(/used_memory:(\d+)/)?.[1] || '0');
-                logger.info('Redis当前内存使用:', { used: `${(used / 1024 / 1024 / 1024).toFixed(2)}GB`, maxMemory: `${maxMemoryGB}GB` });
+                logger.info(`Redis当前内存使用: ${(used / 1024 / 1024 / 1024).toFixed(2)}GG/${maxMemoryGB}GB`);
             } catch (error) {
                 logger.error('Redis内存配置设置失败:', error);
             }
@@ -260,6 +260,7 @@ class RedisManager extends EventEmitter {
 
             const pipeline = this.redis.pipeline();
             const ndsGroups: { [key: string]: any[] } = {};
+            let rpushCount = 0; // 记录rpush操作的数量
 
             // 按 NDSID 分组，确保转换为字符串
             items.forEach(item => {
@@ -273,6 +274,7 @@ class RedisManager extends EventEmitter {
                 const taskQueueKey = this.getTaskQueueKey(ndsId);
                 const scanQueueKey = this.getScanListKey(ndsId)
                 dataList.forEach(data => {
+                    rpushCount++; // 增加rpush计数
                     pipeline.rpush(taskQueueKey, JSON.stringify(data));  // 使用 RPUSH, 新数据插入尾部
                     pipeline.sadd(scanQueueKey, data.file_path); // 使用SADD添加扫描文件记录表
                     this.updateScanListMaxTime(ndsId, data.file_path); // 更新最大时间映射
@@ -284,9 +286,13 @@ class RedisManager extends EventEmitter {
                 throw new Error('Pipeline execution failed');
             }
 
+            // 只统计rpush操作的成功数量
+            const successCount = results.filter((result, index) => index % 2 === 0 && !result[0]).length;
+            const failedCount = rpushCount - successCount;
+
             return {
-                success: results.filter(([err]) => !err).length,
-                failed: results.filter(([err]) => err).length
+                success: successCount,
+                failed: failedCount
             };
         } catch (error) {
             logger.error('Redis批量入队失败:', error);
