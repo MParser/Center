@@ -1,0 +1,38 @@
+{
+  "app": {
+    "name": "MParser Center",
+    "version": "1.0.0",
+    "description": "MParser Center V1.0.0",
+    "host": "0.0.0.0",
+    "port": 9002,
+    "env": "development"
+  },
+  "log": {
+    "level": "info"
+  },
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "用户名",
+    "password": "密码",
+    "database": "数据库名称",
+    "pools": 100,
+    "timeout": 300
+  },
+  "redis": {
+    "host": "127.0.0.1",
+    "port": 6379,
+    "password": "密码",
+    "database": 0,
+    "maxMemoryGB": 32,
+    "maxMemoryPolicy": "noeviction",
+    "highMemoryThreshold": 0.9
+  },
+  "clickhouse": {
+    "host": "服务器IP地址",
+    "port": 9000,
+    "user": "用户名",
+    "password": "密码",
+    "database": "数据库名称"
+  }
+}
